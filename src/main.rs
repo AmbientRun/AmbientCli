@@ -72,10 +72,19 @@ async fn main() -> anyhow::Result<()> {
         );
         println!(
             "You can select Ambient runtime version with {}{}`ambl set-default`{}",
-            color::Bg(color::Blue),
+            color::Bg(color::Magenta),
             color::Fg(color::Yellow),
             style::Reset
         );
+
+        if args.get(0) == Some(&"--help".to_string()) {
+            println!(
+                "The usages below will apply to ambl as well, e.g. {}{}`ambl new`{}",
+                color::Bg(color::Green),
+                color::Fg(color::Yellow),
+                style::Reset
+            );
+        }
 
         let is_stable = version.split(" ").collect::<Vec<&str>>()[0] == "stable";
         let version = version.split(" ").collect::<Vec<&str>>()[1];
