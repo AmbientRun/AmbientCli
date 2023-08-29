@@ -1,0 +1,16 @@
+[package]
+name = "ambl"
+version = "0.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+inquire = { version = "0.6.2", features = ["date"] }
+tokio = { version = "1.32.0", features = ["full"] }
+anyhow = "1.0.75"
+dirs = "5.0.1"
+reqwest = { version = "0.11.20", features = ["blocking"] }
+toml = "0.7.6"
+termion = "2.0.1"
+chrono = "0.4.26"
