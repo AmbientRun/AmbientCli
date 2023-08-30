@@ -1,16 +1,29 @@
 use anyhow::Context;
+use chrono::Datelike;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use termion::color;
 use termion::style;
 use toml::Value;
+use zip::read::ZipArchive;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let options: Vec<&str> = vec!["v0.2.1", "nightly"];
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.get(0) == Some(&"--help".to_string()) {
+        println!(
+            "The usages below will apply to ambl as well, e.g. {}{}`ambl new`{}",
+            color::Bg(color::Green),
+            color::Fg(color::Yellow),
+            style::Reset
+        );
+    }
+
     if args.get(0) == Some(&"set-default".to_string()) {
         let ans = inquire::Select::new(
             "Which ambient runtime version would you like to use?",
@@ -27,9 +40,9 @@ async fn main() -> anyhow::Result<()> {
                     println!();
 
                     let d = inquire::DateSelect::new("Nightly date:")
-                        .with_default(chrono::Local::now().date_naive().pred_opt().unwrap())
-                        .with_min_date(chrono::NaiveDate::from_ymd_opt(2023, 8, 21).unwrap())
-                        .with_max_date(chrono::Local::now().date_naive().pred_opt().unwrap())
+                        .with_default(chrono::Utc::now().date_naive())
+                        .with_min_date(chrono::NaiveDate::from_ymd_opt(2023, 8, 30).unwrap())
+                        .with_max_date(chrono::Utc::now().date_naive()) //.pred_opt()
                         .prompt()
                         .unwrap();
                     println!(
@@ -77,15 +90,6 @@ async fn main() -> anyhow::Result<()> {
             style::Reset
         );
 
-        if args.get(0) == Some(&"--help".to_string()) {
-            println!(
-                "The usages below will apply to ambl as well, e.g. {}{}`ambl new`{}",
-                color::Bg(color::Green),
-                color::Fg(color::Yellow),
-                style::Reset
-            );
-        }
-
         let is_stable = version.split(" ").collect::<Vec<&str>>()[0] == "stable";
         let version = version.split(" ").collect::<Vec<&str>>()[1];
         // check if the version is installed
@@ -93,23 +97,18 @@ async fn main() -> anyhow::Result<()> {
         let ambient_dir = home_dir.join(".ambient");
         let runtime_dir = if is_stable {
             match std::env::consts::OS {
-                "macos" => ambient_dir.join(format!("ambient-{}-macos", version.replace(".", "-"))),
-                "ubuntu" => {
-                    ambient_dir.join(format!("ambient-{}-ubuntu", version.replace(".", "-")))
-                }
+                "macos" => ambient_dir.join(format!("ambient-{}", version.replace(".", "-"))),
+                "ubuntu" => ambient_dir.join(format!("ambient-{}", version.replace(".", "-"))),
                 _ => anyhow::bail!("Unsupported OS"),
             }
         } else {
-            // TODO: ambient-nightly-YYYYMMDD-OS
             match std::env::consts::OS {
-                "macos" => ambient_dir.join(format!(
-                    "ambient-nightly-{}-macos",
-                    version.replace(".", "-")
-                )),
-                "ubuntu" => ambient_dir.join(format!(
-                    "ambient-nightly-{}-ubuntu",
-                    version.replace(".", "-")
-                )),
+                "macos" => {
+                    ambient_dir.join(format!("ambient-nightly-{}", version.replace(".", "-")))
+                }
+                "ubuntu" => {
+                    ambient_dir.join(format!("ambient-nightly-{}", version.replace(".", "-")))
+                }
                 _ => anyhow::bail!("Unsupported OS"),
             }
         };
@@ -117,16 +116,17 @@ async fn main() -> anyhow::Result<()> {
         if !runtime_dir.exists() || fs::metadata(&runtime_dir)?.len() == 0 {
             if is_stable {
                 println!("Downloading stable version...");
-                let runtime_dir = download_stable(version.to_string()).await?;
+                download_stable(version.to_string()).await?;
                 println!("Downloaded stable version at {:?}", runtime_dir);
             } else {
                 println!("Downloading nightly version...");
-                let runtime_dir = download_nightly(version.to_string()).await?;
+                download_nightly(version.to_string()).await?;
                 println!("Downloaded nightly version at {:?}", runtime_dir);
             }
         }
 
         // run the runtime with args
+        println!("runtime_dir {:?}", &runtime_dir);
         let all_args: Vec<String> = std::env::args().skip(1).collect();
         let mut child = Command::new(&runtime_dir)
             .args(&all_args)
@@ -140,84 +140,155 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn download_stable(version: String) -> anyhow::Result<String> {
+fn wget_is_available() -> bool {
+    match std::process::Command::new("wget").arg("--version").output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
+pub async fn download_stable(version: String) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
         let url = match std::env::consts::OS {
+            "windows" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-pc-windows-msvc.zip", version),
             "macos" => format!(
-                "https://storage.googleapis.com/ambient-artifacts/ambient-release/ambient-{}-macos",
-                version.replace(".", "-")
-            ),
+                "https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-aarch64-apple-darwin.zip", version),
+            "ubuntu" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-unknown-linux-gnu.zip", version),
             _ => anyhow::bail!("Unsupported OS"),
         };
 
         let home_dir = dirs::home_dir().expect("Failed to get home directory.");
-        let mut dest_folder = home_dir.join(".ambient");
+        let dest_folder = home_dir.join(".ambient");
+        let zip_path = dest_folder.join(url.split('/').last().unwrap_or("unknown.zip"));
 
-        let mut response = reqwest::blocking::get(url.clone()).context("Failed to download")?;
+        if wget_is_available() {
+            let status = std::process::Command::new("wget")
+                .arg("-O")
+                .arg(zip_path.to_string_lossy().to_string())
+                .arg(&url)
+                .status()?;
 
-        let filename = url.split('/').last().unwrap_or("unknown");
-
-        dest_folder.push(filename);
-
-        let mut file = std::fs::File::create(&dest_folder)?;
-        let mut bytes = Vec::new();
-
-        response.copy_to(&mut bytes).context("Fail ")?;
-
-        file.write_all(&bytes).context("")?;
-
-        let output = Command::new("chmod")
-            .arg("+x")
-            .arg(&dest_folder)
-            .output()
-            .expect("bad command");
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Failed to set permissions: {}", stderr);
+            if !status.success() {
+                anyhow::bail!("wget failed");
+            }
+        } else {
+            // Download zip
+            let mut response = reqwest::blocking::get(&url).context("Failed to download")?;
+            let mut file = fs::File::create(&zip_path)?;
+            response.copy_to(&mut file)?;
         }
 
-        Ok(format!("{:?}", dest_folder).replace("\"", ""))
+        // Extract zip
+        let mut archive = ZipArchive::new(fs::File::open(&zip_path)?)?;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+
+            // TODO: windows should be different?
+            let outpath = dest_folder.join(format!("ambient-{}", version.replace(".", "-")));
+
+            if (&*file.name()).ends_with('/') {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(p) = outpath.parent() {
+                    if !p.exists() {
+                        fs::create_dir_all(&p)?;
+                    }
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+
+        // Set permissions (if needed)
+        let path = dest_folder.join(format!("ambient-{}", version.replace(".", "-")));
+        // println!("path: {:?}", &path);
+        if std::env::consts::OS != "windows" {
+            let output = std::process::Command::new("chmod")
+                .arg("+x")
+                .arg(&path)  // replace "ambient" with your binary name
+                .output()
+                .expect("Failed to execute chmod");
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Failed to set permissions: {}", stderr);
+            }
+        }
+
+        Ok(format!("{:?}", &path).replace("\"", ""))  // replace "ambient" with your binary name
     })
     .await
     .unwrap()
 }
 
-async fn download_nightly(date: String) -> anyhow::Result<String> {
+pub async fn download_nightly(date: String) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
         let url = match std::env::consts::OS {
-            "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient"),
+            "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient-aarch64-apple-darwin.zip"),
+            "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-latest/ambient-x86_64-unknown-linux-gnu.zip"),
             _ => anyhow::bail!("Unsupported OS"),
         };
 
+
         let home_dir = dirs::home_dir().expect("Failed to get home directory.");
-        let mut dest_folder = home_dir.join(".ambient");
+        let dest_folder = home_dir.join(".ambient");
+        let zip_path = dest_folder.join(url.split('/').last().unwrap_or("unknown.zip"));
 
-        let mut response = reqwest::blocking::get(url.clone()).context("Failed to download")?;
+        if wget_is_available() {
+            let status = std::process::Command::new("wget")
+                .arg("-O")
+                .arg(zip_path.to_string_lossy().to_string())
+                .arg(&url)
+                .status()?;
 
-        let filename = url.split('/').last().unwrap_or("unknown");
-        let filename = format!("{}-nightly-{}-{}", filename, date, std::env::consts::OS);
-        dest_folder.push(filename);
-
-        let mut file = std::fs::File::create(&dest_folder)?;
-        let mut bytes = Vec::new();
-
-        response.copy_to(&mut bytes).context("Fail ")?;
-
-        file.write_all(&bytes).context("")?;
-
-        let output = Command::new("chmod")
-            .arg("+x")
-            .arg(&dest_folder)
-            .output()
-            .expect("bad command");
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Failed to set permissions: {}", stderr);
+            if !status.success() {
+                anyhow::bail!("wget failed");
+            }
+        } else {
+            // Download zip
+            let mut response = reqwest::blocking::get(&url).context("Failed to download")?;
+            let mut file = fs::File::create(&zip_path)?;
+            response.copy_to(&mut file)?;
         }
 
-        Ok(format!("{:?}", dest_folder).replace("\"", ""))
+        // Extract zip
+        let mut archive = ZipArchive::new(fs::File::open(&zip_path)?)?;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+
+            // TODO: windows should be different?
+            let outpath = dest_folder.join(format!("ambient-nightly-{}", date));
+
+            if (&*file.name()).ends_with('/') {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(p) = outpath.parent() {
+                    if !p.exists() {
+                        fs::create_dir_all(&p)?;
+                    }
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+
+        // Set permissions (if needed)
+        let path = dest_folder.join(format!("ambient-nightly-{}", date));
+        // println!("path: {:?}", &path);
+        if std::env::consts::OS != "windows" {
+            let output = std::process::Command::new("chmod")
+                .arg("+x")
+                .arg(&path)  // replace "ambient" with your binary name
+                .output()
+                .expect("Failed to execute chmod");
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("Failed to set permissions: {}", stderr);
+            }
+        }
+
+        Ok(format!("{:?}", &path).replace("\"", ""))  // replace "ambient" with your binary name
     })
     .await
     .unwrap()

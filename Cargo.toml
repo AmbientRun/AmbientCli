@@ -1,6 +1,6 @@
 [package]
 name = "ambl"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "A command line tool to help you manage your Ambient runtime."
 license = "MIT"
@@ -16,3 +16,4 @@ reqwest = { version = "0.11.20", features = ["blocking"] }
 toml = "0.7.6"
 termion = "2.0.1"
 chrono = "0.4.26"
+zip = "0.6.6"
