@@ -1,27 +1,19 @@
 use anyhow::Context;
-use chrono::Datelike;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use termion::color;
-use termion::style;
+use termion::{color, style};
 use toml::Value;
 use zip::read::ZipArchive;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let options: Vec<&str> = vec!["v0.2.1", "nightly"];
-
+    let mut show_help = false;
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    if args.get(0) == Some(&"--help".to_string()) {
-        println!(
-            "The usages below will apply to ambl as well, e.g. {}{}`ambl new`{}",
-            color::Bg(color::Green),
-            color::Fg(color::Yellow),
-            style::Reset
-        );
+    if args.get(0) == Some(&"--help".to_string()) || args.get(0) == None {
+        show_help = true;
     }
 
     if args.get(0) == Some(&"set-default".to_string()) {
@@ -36,10 +28,9 @@ async fn main() -> anyhow::Result<()> {
                     set_version("stable v0.2.1".to_string());
                 }
                 "nightly" => {
-                    println!("-------> Select a date for the nightly version <-------");
                     println!();
 
-                    let d = inquire::DateSelect::new("Nightly date:")
+                    let d = inquire::DateSelect::new("Nightly version date:")
                         .with_default(chrono::Utc::now().date_naive())
                         .with_min_date(chrono::NaiveDate::from_ymd_opt(2023, 8, 30).unwrap())
                         .with_max_date(chrono::Utc::now().date_naive()) //.pred_opt()
@@ -63,24 +54,8 @@ async fn main() -> anyhow::Result<()> {
         println!("ambl version: {}", env!("CARGO_PKG_VERSION"));
         println!(
             "{}{}Note that this is just the version of the launcher.{}",
-            color::Bg(color::Blue),
+            color::Bg(color::Magenta),
             color::Fg(color::Yellow),
-            style::Reset
-        );
-        println!(
-            "You can select Ambient runtime version with {}{}`ambl set-default`{}",
-            color::Bg(color::Blue),
-            color::Fg(color::Yellow),
-            style::Reset
-        );
-    } else {
-        let version = get_version();
-
-        println!(
-            "ambient version used: {}{}{}{}",
-            color::Bg(color::Blue),
-            color::Fg(color::Yellow),
-            version,
             style::Reset
         );
         println!(
@@ -89,6 +64,35 @@ async fn main() -> anyhow::Result<()> {
             color::Fg(color::Yellow),
             style::Reset
         );
+    } else {
+        let version = get_version();
+
+        println!(
+            "{}{}{}Current ambient runtime version selected for ambl:{}\n\t{}",
+            style::Bold,
+            style::Underline,
+            color::Fg(color::Magenta),
+            style::Reset,
+            version,
+        );
+
+        println!(
+            "{}{}{}Select Ambient runtime version:{}\n\tambl set-default",
+            style::Bold,
+            style::Underline,
+            color::Fg(color::Magenta),
+            style::Reset
+        );
+
+        if show_help {
+            println!(
+                "{}{}{}The usage info below applies only to `ambl`, e.g.:{}\n\tambl new\n",
+                style::Bold,
+                style::Underline,
+                color::Fg(color::Magenta),
+                style::Reset
+            );
+        }
 
         let is_stable = version.split(" ").collect::<Vec<&str>>()[0] == "stable";
         let version = version.split(" ").collect::<Vec<&str>>()[1];
@@ -126,7 +130,6 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // run the runtime with args
-        println!("runtime_dir {:?}", &runtime_dir);
         let all_args: Vec<String> = std::env::args().skip(1).collect();
         let mut child = Command::new(&runtime_dir)
             .args(&all_args)
