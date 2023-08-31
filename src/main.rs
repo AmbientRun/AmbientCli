@@ -12,6 +12,30 @@ async fn main() -> anyhow::Result<()> {
     let mut show_help = false;
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    let output = Command::new("rustup")
+        .args(&["target", "list", "--installed"])
+        .stdout(Stdio::piped())
+        .output()
+        .expect("Failed to execute rustup command");
+
+    let installed_targets = String::from_utf8_lossy(&output.stdout);
+
+    if !installed_targets.contains("wasm32-wasi") {
+        println!("Installing wasm32-wasi target... This is a one-time operation.");
+        let mut child = Command::new("rustup")
+            .arg("target")
+            .arg("add")
+            .arg("--toolchain")
+            .arg("stable")
+            .arg("wasm32-wasi")
+            .stdout(Stdio::inherit()) // Forward stdout directly
+            .stderr(Stdio::inherit()) // Forward stderr directly
+            .spawn()
+            .expect("Failed to execute command");
+
+        let _status = child.wait().expect("Failed to wait on child");
+    }
+
     if args.get(0) == Some(&"--help".to_string()) || args.get(0) == None {
         show_help = true;
     }
@@ -119,11 +143,11 @@ async fn main() -> anyhow::Result<()> {
 
         if !runtime_dir.exists() || fs::metadata(&runtime_dir)?.len() == 0 {
             if is_stable {
-                println!("Downloading stable version...");
+                println!("Downloading stable version... This will only happen once.");
                 download_stable(version.to_string()).await?;
                 println!("Downloaded stable version at {:?}", runtime_dir);
             } else {
-                println!("Downloading nightly version...");
+                println!("Downloading nightly version... This will only happen once.");
                 download_nightly(version.to_string()).await?;
                 println!("Downloaded nightly version at {:?}", runtime_dir);
             }
