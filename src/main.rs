@@ -150,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 println!("Downloading nightly version... This will only happen once.");
                 download(
-                    get_stable_url(version.to_string())?,
+                    get_nightly_url(version.to_string())?,
                     Version::Nightly(version.to_string()),
                 )
                 .await?;
@@ -179,6 +179,34 @@ fn wget_is_available() -> bool {
     }
 }
 
+/// Get the download URL for a given version and OS
+/// e.g. `get_url("v0.2.1", "macos")`
+pub fn get_url(version: String, os: String) -> anyhow::Result<String> {
+    let s = if !version.contains("nightly") {
+        // todo: more robust validation
+        if !version.contains('v') {
+            anyhow::bail!("Invalid version");
+        };
+        match os.as_str() {
+            "windows" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-pc-windows-msvc.zip", version),
+            "macos" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-aarch64-apple-darwin.zip", version),
+            "ubuntu" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-unknown-linux-gnu.zip", version),
+            _ => anyhow::bail!("Unsupported OS"),
+        }
+    } else {
+        // e.g. nightly-2023-08-31
+        let date = version.replace("nightly-", "");
+        match os.as_str() {
+            "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient-aarch64-apple-darwin.zip"),
+            "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-22.04/ambient-x86_64-unknown-linux-gnu.zip"),
+            "windows" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/windows-latest/ambient-x86_64-pc-windows-msvc.zip"),
+            _ => anyhow::bail!("Unsupported OS"),
+        }
+    };
+    Ok(s)
+}
+
+/// Get the download URL for a given version and OS
 pub fn get_stable_url(version: String) -> anyhow::Result<String> {
     let url = match std::env::consts::OS {
         "windows" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-pc-windows-msvc.zip", version),
@@ -190,21 +218,26 @@ pub fn get_stable_url(version: String) -> anyhow::Result<String> {
     Ok(url)
 }
 
+/// Get the download URL for a given version and OS
 pub fn get_nightly_url(date: String) -> anyhow::Result<String> {
     let url = match std::env::consts::OS {
         "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient-aarch64-apple-darwin.zip"),
-        "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-latest/ambient-x86_64-unknown-linux-gnu.zip"),
+        "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-22.04/ambient-x86_64-unknown-linux-gnu.zip"),
         "windows" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/windows-latest/ambient-x86_64-pc-windows-msvc.zip"),
         _ => anyhow::bail!("Unsupported OS"),
     };
     Ok(url)
 }
 
+/// The version of the runtime
 pub enum Version {
+    /// The stable version
     Stable(String),
+    /// The nightly version
     Nightly(String),
 }
 
+/// Download the runtime
 pub async fn download(url: String, v: Version) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
         let home_dir = dirs::home_dir().expect("Failed to get home directory.");
