@@ -13,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let output = Command::new("rustup")
-        .args(&["target", "list", "--installed"])
+        .args(["target", "list", "--installed"])
         .stdout(Stdio::piped())
         .output()
         .expect("Failed to execute rustup command");
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         let _status = child.wait().expect("Failed to wait on child");
     }
 
-    if args.get(0) == Some(&"--help".to_string()) || args.get(0) == None {
+    if args.get(0) == Some(&"--help".to_string()) || args.get(0).is_none() {
         show_help = true;
     }
 
@@ -60,13 +60,10 @@ async fn main() -> anyhow::Result<()> {
                         .with_max_date(chrono::Utc::now().date_naive()) //.pred_opt()
                         .prompt()
                         .unwrap();
-                    println!(
-                        "You selected nightly version: {}",
-                        d.format("%Y-%m-%d").to_string()
-                    );
+                    println!("You selected nightly version: {}", d.format("%Y-%m-%d"));
                     println!();
 
-                    set_version(format!("nightly {}", d.format("%Y-%m-%d").to_string()));
+                    set_version(format!("nightly {}", d.format("%Y-%m-%d")));
                 }
                 _ => anyhow::bail!("Unsupported version"),
             },
@@ -118,24 +115,24 @@ async fn main() -> anyhow::Result<()> {
             );
         }
 
-        let is_stable = version.split(" ").collect::<Vec<&str>>()[0] == "stable";
-        let version = version.split(" ").collect::<Vec<&str>>()[1];
+        let is_stable = version.split(' ').collect::<Vec<&str>>()[0] == "stable";
+        let version = version.split(' ').collect::<Vec<&str>>()[1];
         // check if the version is installed
         let home_dir = dirs::home_dir().expect("Failed to get home directory.");
         let ambient_dir = home_dir.join(".ambient");
         let runtime_dir = if is_stable {
             match std::env::consts::OS {
-                "macos" => ambient_dir.join(format!("ambient-{}", version.replace(".", "-"))),
-                "ubuntu" => ambient_dir.join(format!("ambient-{}", version.replace(".", "-"))),
+                "macos" => ambient_dir.join(format!("ambient-{}", version.replace('.', "-"))),
+                "ubuntu" => ambient_dir.join(format!("ambient-{}", version.replace('.', "-"))),
                 _ => anyhow::bail!("Unsupported OS"),
             }
         } else {
             match std::env::consts::OS {
                 "macos" => {
-                    ambient_dir.join(format!("ambient-nightly-{}", version.replace(".", "-")))
+                    ambient_dir.join(format!("ambient-nightly-{}", version.replace('.', "-")))
                 }
                 "ubuntu" => {
-                    ambient_dir.join(format!("ambient-nightly-{}", version.replace(".", "-")))
+                    ambient_dir.join(format!("ambient-nightly-{}", version.replace('.', "-")))
                 }
                 _ => anyhow::bail!("Unsupported OS"),
             }
@@ -144,11 +141,19 @@ async fn main() -> anyhow::Result<()> {
         if !runtime_dir.exists() || fs::metadata(&runtime_dir)?.len() == 0 {
             if is_stable {
                 println!("Downloading stable version... This will only happen once.");
-                download_stable(version.to_string()).await?;
+                download(
+                    get_stable_url(version.to_string())?,
+                    Version::Stable(version.to_string()),
+                )
+                .await?;
                 println!("Downloaded stable version at {:?}", runtime_dir);
             } else {
                 println!("Downloading nightly version... This will only happen once.");
-                download_nightly(version.to_string()).await?;
+                download(
+                    get_stable_url(version.to_string())?,
+                    Version::Nightly(version.to_string()),
+                )
+                .await?;
                 println!("Downloaded nightly version at {:?}", runtime_dir);
             }
         }
@@ -174,88 +179,34 @@ fn wget_is_available() -> bool {
     }
 }
 
-pub async fn download_stable(version: String) -> anyhow::Result<String> {
-    tokio::task::spawn_blocking(move || {
-        let url = match std::env::consts::OS {
-            "windows" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-pc-windows-msvc.zip", version),
-            "macos" => format!(
-                "https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-aarch64-apple-darwin.zip", version),
-            "ubuntu" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-unknown-linux-gnu.zip", version),
-            _ => anyhow::bail!("Unsupported OS"),
-        };
-
-        let home_dir = dirs::home_dir().expect("Failed to get home directory.");
-        let dest_folder = home_dir.join(".ambient");
-        let zip_path = dest_folder.join(url.split('/').last().unwrap_or("unknown.zip"));
-
-        if wget_is_available() {
-            let status = std::process::Command::new("wget")
-                .arg("-O")
-                .arg(zip_path.to_string_lossy().to_string())
-                .arg(&url)
-                .status()?;
-
-            if !status.success() {
-                anyhow::bail!("wget failed");
-            }
-        } else {
-            // Download zip
-            let mut response = reqwest::blocking::get(&url).context("Failed to download")?;
-            let mut file = fs::File::create(&zip_path)?;
-            response.copy_to(&mut file)?;
-        }
-
-        // Extract zip
-        let mut archive = ZipArchive::new(fs::File::open(&zip_path)?)?;
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-
-            // TODO: windows should be different?
-            let outpath = dest_folder.join(format!("ambient-{}", version.replace(".", "-")));
-
-            if (&*file.name()).ends_with('/') {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(&p)?;
-                    }
-                }
-                let mut outfile = fs::File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
-            }
-        }
-
-        // Set permissions
-        let path = dest_folder.join(format!("ambient-{}", version.replace(".", "-")));
-        if std::env::consts::OS != "windows" {
-            let output = std::process::Command::new("chmod")
-                .arg("+x")
-                .arg(&path) 
-                .output()
-                .expect("Failed to execute chmod");
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("Failed to set permissions: {}", stderr);
-            }
-        }
-
-        Ok(format!("{:?}", &path).replace("\"", "")) 
-    })
-    .await
-    .unwrap()
+pub fn get_stable_url(version: String) -> anyhow::Result<String> {
+    let url = match std::env::consts::OS {
+        "windows" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-pc-windows-msvc.zip", version),
+        "macos" => format!(
+            "https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-aarch64-apple-darwin.zip", version),
+        "ubuntu" => format!("https://github.com/AmbientRun/Ambient/releases/download/{}/ambient-x86_64-unknown-linux-gnu.zip", version),
+        _ => anyhow::bail!("Unsupported OS"),
+    };
+    Ok(url)
 }
 
-pub async fn download_nightly(date: String) -> anyhow::Result<String> {
+pub fn get_nightly_url(date: String) -> anyhow::Result<String> {
+    let url = match std::env::consts::OS {
+        "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient-aarch64-apple-darwin.zip"),
+        "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-latest/ambient-x86_64-unknown-linux-gnu.zip"),
+        "windows" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/windows-latest/ambient-x86_64-pc-windows-msvc.zip"),
+        _ => anyhow::bail!("Unsupported OS"),
+    };
+    Ok(url)
+}
+
+pub enum Version {
+    Stable(String),
+    Nightly(String),
+}
+
+pub async fn download(url: String, v: Version) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
-        let url = match std::env::consts::OS {
-            "macos" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/macos-latest/ambient-aarch64-apple-darwin.zip"),
-            "ubuntu" => format!("https://storage.googleapis.com/ambient-artifacts/ambient-nightly-build/{date}/ubuntu-latest/ambient-x86_64-unknown-linux-gnu.zip"),
-            _ => anyhow::bail!("Unsupported OS"),
-        };
-
-
         let home_dir = dirs::home_dir().expect("Failed to get home directory.");
         let dest_folder = home_dir.join(".ambient");
         let zip_path = dest_folder.join(url.split('/').last().unwrap_or("unknown.zip"));
@@ -277,20 +228,27 @@ pub async fn download_nightly(date: String) -> anyhow::Result<String> {
             response.copy_to(&mut file)?;
         }
 
+        // TODO: windows should be different?
+        let outpath = match v {
+            Version::Stable(version) => {
+                dest_folder.join(format!("ambient-{}", version.replace('.', "-")))
+            }
+            Version::Nightly(version) => {
+                dest_folder.join(format!("ambient-nightly-{}", version.replace('.', "-")))
+            }
+        };
+
         // Extract zip
         let mut archive = ZipArchive::new(fs::File::open(&zip_path)?)?;
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
 
-            // TODO: windows should be different?
-            let outpath = dest_folder.join(format!("ambient-nightly-{}", date));
-
-            if (&*file.name()).ends_with('/') {
+            if (*file.name()).ends_with('/') {
                 fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        fs::create_dir_all(&p)?;
+                        fs::create_dir_all(p)?;
                     }
                 }
                 let mut outfile = fs::File::create(&outpath)?;
@@ -299,11 +257,10 @@ pub async fn download_nightly(date: String) -> anyhow::Result<String> {
         }
 
         // Set permissions
-        let path = dest_folder.join(format!("ambient-nightly-{}", date));
         if std::env::consts::OS != "windows" {
             let output = std::process::Command::new("chmod")
                 .arg("+x")
-                .arg(&path) 
+                .arg(&outpath)
                 .output()
                 .expect("Failed to execute chmod");
 
@@ -313,7 +270,7 @@ pub async fn download_nightly(date: String) -> anyhow::Result<String> {
             }
         }
 
-        Ok(format!("{:?}", &path).replace("\"", "")) 
+        Ok(format!("{:?}", &outpath).replace('\"', ""))
     })
     .await
     .unwrap()
@@ -341,12 +298,12 @@ fn get_version() -> String {
         file.write_all(toml_content.as_bytes())
             .expect("Failed to write to config.toml file.");
         println!("config.toml file created at {:?}", config_path);
-        return "stable v0.2.1".to_string();
+        "stable v0.2.1".to_string()
     } else {
         let config_content = fs::read_to_string(&config_path).expect("Failed to read config file.");
         let config: Value = toml::from_str(&config_content).expect("Failed to parse config file.");
         let default_version = config["default"].as_str().unwrap();
-        return default_version.to_string();
+        default_version.to_string()
     }
 }
 
