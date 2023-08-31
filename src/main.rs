@@ -226,13 +226,12 @@ pub async fn download_stable(version: String) -> anyhow::Result<String> {
             }
         }
 
-        // Set permissions (if needed)
+        // Set permissions
         let path = dest_folder.join(format!("ambient-{}", version.replace(".", "-")));
-        // println!("path: {:?}", &path);
         if std::env::consts::OS != "windows" {
             let output = std::process::Command::new("chmod")
                 .arg("+x")
-                .arg(&path)  // replace "ambient" with your binary name
+                .arg(&path) 
                 .output()
                 .expect("Failed to execute chmod");
 
@@ -242,7 +241,7 @@ pub async fn download_stable(version: String) -> anyhow::Result<String> {
             }
         }
 
-        Ok(format!("{:?}", &path).replace("\"", ""))  // replace "ambient" with your binary name
+        Ok(format!("{:?}", &path).replace("\"", "")) 
     })
     .await
     .unwrap()
@@ -299,13 +298,12 @@ pub async fn download_nightly(date: String) -> anyhow::Result<String> {
             }
         }
 
-        // Set permissions (if needed)
+        // Set permissions
         let path = dest_folder.join(format!("ambient-nightly-{}", date));
-        // println!("path: {:?}", &path);
         if std::env::consts::OS != "windows" {
             let output = std::process::Command::new("chmod")
                 .arg("+x")
-                .arg(&path)  // replace "ambient" with your binary name
+                .arg(&path) 
                 .output()
                 .expect("Failed to execute chmod");
 
@@ -315,7 +313,7 @@ pub async fn download_nightly(date: String) -> anyhow::Result<String> {
             }
         }
 
-        Ok(format!("{:?}", &path).replace("\"", ""))  // replace "ambient" with your binary name
+        Ok(format!("{:?}", &path).replace("\"", "")) 
     })
     .await
     .unwrap()
