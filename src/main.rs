@@ -86,7 +86,36 @@ async fn main() -> anyhow::Result<()> {
             style::Reset
         );
     } else {
-        let version = get_version();
+        let version = if args.contains(&format!("run")) {
+            let current_dir = std::env::current_dir().expect("Failed to get current directory.");
+            let ambient_toml_path = current_dir.join("ambient.toml");
+            if !ambient_toml_path.exists() {
+                anyhow::bail!("ambient.toml file not found in the current directory.");
+            }
+            let ambient_toml_content =
+                fs::read_to_string(&ambient_toml_path).expect("Failed to read ambient.toml file.");
+            let ambient_toml: Value =
+                toml::from_str(&ambient_toml_content).expect("Failed to parse ambient.toml file.");
+            let version_str = ambient_toml["package"]["ambient_version"].as_str();
+            if version_str.is_none() {
+                get_version()
+            } else {
+                let version_str = version_str.unwrap().to_string();
+                let version = semver::Version::parse(&version_str)
+                    .expect("Failed to parse version using semver.");
+
+                if version.pre == semver::Prerelease::EMPTY {
+                    format!(
+                        "stable {}.{}.{}",
+                        version.major, version.minor, version.patch
+                    )
+                } else {
+                    version.pre.replace("nightly-", "nightly ")
+                }
+            }
+        } else {
+            get_version()
+        };
 
         println!(
             "{}{}{}Current ambient runtime version selected for ambl:{}\n\t{}",
