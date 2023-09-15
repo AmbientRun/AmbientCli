@@ -5,6 +5,7 @@ mod versions;
 use ambient_toml::AmbientToml;
 use anyhow::Context;
 use clap::Parser;
+use colored::Colorize;
 use directories::ProjectDirs;
 use environment::{runtimes_dir, settings_path, Os};
 use futures::StreamExt;
@@ -25,8 +26,6 @@ struct Args {
 pub enum Commands {
     #[command(subcommand)]
     Runtime(RuntimeCommands),
-    #[command(external_subcommand)]
-    Variant(Vec<String>),
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -116,17 +115,8 @@ async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersi
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    env_logger::init();
-
+async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
     let args = Args::parse();
-
-    let mut settings = if settings_path()?.exists() {
-        Settings::load()?
-    } else {
-        Settings::default()
-    };
 
     match args.command {
         Commands::Runtime(RuntimeCommands::List) => {
@@ -166,13 +156,48 @@ async fn main() -> anyhow::Result<()> {
             let version = get_current_runtime(&settings).await?;
             println!("{}", version.version);
         }
-        Commands::Variant(args) => {
-            let version = get_current_runtime(&settings).await?;
-            let mut process = std::process::Command::new(version.exe_path()?)
-                .args(args)
-                .spawn()?;
-            process.wait()?;
-        }
+    }
+    Ok(())
+}
+
+async fn runtime_exec(settings: &Settings, args: Vec<String>) -> anyhow::Result<()> {
+    let version = get_current_runtime(settings).await?;
+    let mut process = std::process::Command::new(version.exe_path()?)
+        .args(args)
+        .spawn()?;
+    process.wait()?;
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
+    let settings = if settings_path()?.exists() {
+        Settings::load()?
+    } else {
+        Settings::default()
+    };
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.get(0) == Some(&"runtime".to_string()) {
+        version_manager_main(settings).await?;
+    } else if args.get(0) == Some(&"--help".to_string()) {
+        runtime_exec(&settings, args).await?;
+        println!("");
+        println!(
+            "{}",
+            "Runtime version manager commands:"
+                .white()
+                .bold()
+                .underline()
+        );
+        println!(
+            "  {} Install and manage runtime versions",
+            "runtime".white().bold()
+        );
+    } else {
+        runtime_exec(&settings, args).await?;
     }
 
     Ok(())
