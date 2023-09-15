@@ -33,6 +33,7 @@ pub enum RuntimeCommands {
     Install { version: String },
     InstallLatestNightly,
     SetDefault { version: String },
+    Current,
 }
 
 async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathBuf)>> {
@@ -62,6 +63,15 @@ impl Settings {
     fn save(&self) -> anyhow::Result<()> {
         std::fs::write(settings_path()?, serde_json::to_string_pretty(self)?)?;
         Ok(())
+    }
+}
+
+fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
+    match &settings.default_runtime {
+        Some(version) => Ok(RuntimeVersion::without_builds(version)?),
+        None => {
+            anyhow::bail!("No default runtime version set");
+        }
     }
 }
 
@@ -111,13 +121,12 @@ async fn main() -> anyhow::Result<()> {
                 runtime_version.version.to_string()
             );
         }
+        Commands::Runtime(RuntimeCommands::Current) => {
+            let version = get_current_runtime(&settings)?;
+            println!("{}", version.version);
+        }
         Commands::Variant(args) => {
-            let version = match &settings.default_runtime {
-                Some(version) => RuntimeVersion::without_builds(version)?,
-                None => {
-                    anyhow::bail!("No default runtime version set");
-                }
-            };
+            let version = get_current_runtime(&settings)?;
             let mut process = std::process::Command::new(version.exe_path()?)
                 .args(args)
                 .spawn()?;
