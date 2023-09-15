@@ -13,7 +13,7 @@ use itertools::Itertools;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
-use versions::{get_version, get_versions, RuntimeVersion};
+use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -35,7 +35,6 @@ pub enum RuntimeCommands {
     Install {
         version: String,
     },
-    InstallLatestNightly,
     SetDefault {
         version: String,
     },
@@ -99,12 +98,25 @@ async fn get_version_satisfying_req(
         }
     }
     log::info!("Checking all versions");
-    for version in get_versions().await? {
+    for version in get_versions(VersionsFilter {
+        include_private: true,
+        include_nightly: true,
+    })
+    .await?
+    {
         if version_req.matches(&version.version) {
             return Ok(version);
         }
     }
     anyhow::bail!("No version found satisfying {}", version_req);
+}
+
+async fn get_latest_remote_version(filter: VersionsFilter) -> anyhow::Result<RuntimeVersion> {
+    Ok(get_versions(filter)
+        .await?
+        .last()
+        .context("No versions found")?
+        .clone())
 }
 
 async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
@@ -127,7 +139,12 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
 
     match args.command {
         Commands::Runtime(RuntimeCommands::List) => {
-            for build in get_versions().await? {
+            for build in get_versions(VersionsFilter {
+                include_private: true,
+                include_nightly: true,
+            })
+            .await?
+            {
                 println!("{}", build.version);
             }
         }
@@ -135,15 +152,6 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
             for (version, _) in list_installed_runtimes().await? {
                 println!("{}", version);
             }
-        }
-        Commands::Runtime(RuntimeCommands::InstallLatestNightly) => {
-            let latest_nightly = get_versions()
-                .await?
-                .into_iter()
-                .filter(|v| v.is_nightly())
-                .last()
-                .context("No nightly versions found")?;
-            latest_nightly.install().await?;
         }
         Commands::Runtime(RuntimeCommands::Install { version }) => {
             let runtime_version = get_version(&version).await?;

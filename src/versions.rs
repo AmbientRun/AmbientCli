@@ -14,7 +14,7 @@ struct BucketItem {
     mediaLink: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RuntimeVersion {
     pub version: semver::Version,
     pub builds: Vec<Build>,
@@ -28,6 +28,12 @@ impl RuntimeVersion {
     }
     pub fn is_nightly(&self) -> bool {
         self.version.to_string().contains("nightly")
+    }
+    pub fn is_point_release(&self) -> bool {
+        self.version.pre.is_empty()
+    }
+    pub fn is_public(&self) -> bool {
+        self.is_point_release() || self.is_nightly()
     }
     pub fn dir_path(&self) -> anyhow::Result<PathBuf> {
         Ok(runtimes_dir()?.join(self.version.to_string()))
@@ -69,7 +75,7 @@ impl RuntimeVersion {
         Ok(())
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Build {
     pub os: Os,
     pub url: String,
@@ -80,10 +86,19 @@ fn version_from_path(path: &str) -> anyhow::Result<semver::Version> {
     Ok(semver::Version::parse(version)?)
 }
 
-pub async fn get_versions() -> anyhow::Result<Vec<RuntimeVersion>> {
-    get_versions_with_prefix("").await
+#[derive(Debug, Clone, Copy)]
+pub struct VersionsFilter {
+    pub include_private: bool,
+    pub include_nightly: bool,
 }
-async fn get_versions_with_prefix(prefix: &str) -> anyhow::Result<Vec<RuntimeVersion>> {
+
+pub async fn get_versions(filter: VersionsFilter) -> anyhow::Result<Vec<RuntimeVersion>> {
+    get_versions_with_prefix("", filter).await
+}
+async fn get_versions_with_prefix(
+    prefix: &str,
+    filter: VersionsFilter,
+) -> anyhow::Result<Vec<RuntimeVersion>> {
     let client = reqwest::Client::new();
 
     let builds = client
@@ -115,13 +130,25 @@ async fn get_versions_with_prefix(prefix: &str) -> anyhow::Result<Vec<RuntimeVer
                 .collect::<anyhow::Result<Vec<_>>>()?,
         });
     }
+    if !filter.include_private {
+        versions.retain(|v| v.is_public());
+    }
+    if !filter.include_nightly {
+        versions.retain(|v| !v.is_nightly());
+    }
     versions.sort_by_key(|v| v.version.to_string());
     Ok(versions)
 }
 pub async fn get_version(version: &str) -> anyhow::Result<RuntimeVersion> {
-    Ok(get_versions_with_prefix(version)
-        .await?
-        .into_iter()
-        .next()
-        .context("Version not found")?)
+    Ok(get_versions_with_prefix(
+        version,
+        VersionsFilter {
+            include_private: true,
+            include_nightly: true,
+        },
+    )
+    .await?
+    .into_iter()
+    .next()
+    .context("Version not found")?)
 }
