@@ -111,12 +111,17 @@ async fn get_version_satisfying_req(
     anyhow::bail!("No version found satisfying {}", version_req);
 }
 
-async fn get_latest_remote_version(filter: VersionsFilter) -> anyhow::Result<RuntimeVersion> {
-    Ok(get_versions(filter)
-        .await?
-        .last()
-        .context("No versions found")?
-        .clone())
+async fn get_latest_remote_version() -> anyhow::Result<RuntimeVersion> {
+    let versions = get_versions(VersionsFilter {
+        include_private: false,
+        include_nightly: true,
+    })
+    .await?;
+    if let Some(v) = versions.iter().filter(|v| v.is_point_release()).last() {
+        return Ok(v.clone());
+    } else {
+        Ok(versions.last().cloned().context("No versions found")?)
+    }
 }
 
 async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
@@ -129,7 +134,10 @@ async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersi
     match &settings.default_runtime {
         Some(version) => Ok(RuntimeVersion::without_builds(version.clone())),
         None => {
-            anyhow::bail!("No default runtime version set");
+            log::info!("No default runtime version set, using latest remote version");
+            let version = get_latest_remote_version().await?;
+            log::info!("Found latest remote version: {}", version.version);
+            Ok(version)
         }
     }
 }
@@ -184,6 +192,7 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
 
 async fn runtime_exec(settings: &Settings, args: Vec<String>) -> anyhow::Result<()> {
     let version = get_current_runtime(settings).await?;
+    version.install().await?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
         .spawn()?;
