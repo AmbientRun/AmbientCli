@@ -1,12 +1,15 @@
+mod ambient_toml;
 mod environment;
 mod versions;
 
+use ambient_toml::AmbientToml;
 use anyhow::Context;
 use clap::Parser;
 use directories::ProjectDirs;
 use environment::{runtimes_dir, settings_path, Os};
 use futures::StreamExt;
 use itertools::Itertools;
+use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 use versions::{get_version, get_versions, RuntimeVersion};
@@ -30,9 +33,14 @@ pub enum Commands {
 pub enum RuntimeCommands {
     List,
     ListInstalled,
-    Install { version: String },
+    Install {
+        version: String,
+    },
     InstallLatestNightly,
-    SetDefault { version: String },
+    SetDefault {
+        version: String,
+    },
+    /// Show the runtime version that will be used by default in this directory
     Current,
 }
 
@@ -52,7 +60,7 @@ async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathB
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Settings {
-    default_runtime: Option<String>,
+    default_runtime: Option<semver::Version>,
 }
 impl Settings {
     fn load() -> anyhow::Result<Self> {
@@ -66,9 +74,42 @@ impl Settings {
     }
 }
 
-fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
+async fn get_version_satisfying_req(
+    settings: &Settings,
+    version_req: &VersionReq,
+) -> anyhow::Result<RuntimeVersion> {
+    log::info!("Looking for version satisfying {}", version_req);
+    if let Some(default_version) = &settings.default_runtime {
+        log::info!("Checking default version: {}", default_version);
+        if version_req.matches(default_version) {
+            log::info!("Default version matches, returning.");
+            return Ok(RuntimeVersion::without_builds(default_version.clone()));
+        }
+    }
+    log::info!("Checking installed versions");
+    for (version, _) in list_installed_runtimes().await? {
+        if version_req.matches(&version) {
+            return Ok(RuntimeVersion::without_builds(version));
+        }
+    }
+    log::info!("Checking all versions");
+    for version in get_versions().await? {
+        if version_req.matches(&version.version) {
+            return Ok(version);
+        }
+    }
+    anyhow::bail!("No version found satisfying {}", version_req);
+}
+
+async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
+    if AmbientToml::exists() {
+        let toml = AmbientToml::current()?;
+        if let Some(version_req) = toml.package.ambient_version {
+            return get_version_satisfying_req(settings, &version_req).await;
+        }
+    }
     match &settings.default_runtime {
-        Some(version) => Ok(RuntimeVersion::without_builds(version)?),
+        Some(version) => Ok(RuntimeVersion::without_builds(version.clone())),
         None => {
             anyhow::bail!("No default runtime version set");
         }
@@ -114,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Runtime(RuntimeCommands::SetDefault { version }) => {
             let runtime_version = get_version(&version).await?;
             runtime_version.install().await?;
-            settings.default_runtime = Some(runtime_version.version.to_string());
+            settings.default_runtime = Some(runtime_version.version.clone());
             settings.save()?;
             println!(
                 "The default runtime version is now {}",
@@ -122,11 +163,11 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Commands::Runtime(RuntimeCommands::Current) => {
-            let version = get_current_runtime(&settings)?;
+            let version = get_current_runtime(&settings).await?;
             println!("{}", version.version);
         }
         Commands::Variant(args) => {
-            let version = get_current_runtime(&settings)?;
+            let version = get_current_runtime(&settings).await?;
             let mut process = std::process::Command::new(version.exe_path()?)
                 .args(args)
                 .spawn()?;
