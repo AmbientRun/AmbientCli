@@ -3,16 +3,12 @@ mod environment;
 mod versions;
 
 use ambient_toml::AmbientToml;
-use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
-use directories::ProjectDirs;
 use environment::{runtimes_dir, settings_path, Os};
-use futures::StreamExt;
-use itertools::Itertools;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
@@ -30,14 +26,16 @@ pub enum Commands {
 
 #[derive(Parser, Clone, Debug)]
 pub enum RuntimeCommands {
-    List,
+    /// List all available runtime versions
+    ListAll,
+    /// List locally installed runtime versions
     ListInstalled,
-    Install {
-        version: String,
-    },
-    SetDefault {
-        version: String,
-    },
+    /// Install a specific runtime version
+    Install { version: String },
+    /// Update the default runtime version to the latest available
+    Update,
+    /// Set the global default version
+    SetDefault { version: String },
     /// Show the runtime version that will be used by default in this directory
     Current,
     /// Show where the settings file is located
@@ -63,7 +61,27 @@ async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathB
     Ok(runtimes)
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ReleaseTrain {
+    Stable,
+    Nightly,
+    Internal,
+}
+impl ReleaseTrain {
+    pub fn from_version(version: &semver::Version) -> Self {
+        if version.pre.is_empty() {
+            ReleaseTrain::Stable
+        } else {
+            if version.pre.contains("nightly") {
+                ReleaseTrain::Nightly
+            } else {
+                ReleaseTrain::Internal
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Settings {
     default_runtime: Option<semver::Version>,
 }
@@ -76,6 +94,12 @@ impl Settings {
     fn save(&self) -> anyhow::Result<()> {
         std::fs::write(settings_path()?, serde_json::to_string_pretty(self)?)?;
         Ok(())
+    }
+    fn release_train(&self) -> ReleaseTrain {
+        self.default_runtime
+            .as_ref()
+            .map(|v| ReleaseTrain::from_version(v))
+            .unwrap_or(ReleaseTrain::Stable)
     }
 }
 
@@ -111,17 +135,29 @@ async fn get_version_satisfying_req(
     anyhow::bail!("No version found satisfying {}", version_req);
 }
 
-async fn get_latest_remote_version() -> anyhow::Result<RuntimeVersion> {
+async fn get_latest_remote_version_for_train(
+    release_train: ReleaseTrain,
+    fallback_to_nightly: bool,
+) -> anyhow::Result<RuntimeVersion> {
     let versions = get_versions(VersionsFilter {
-        include_private: false,
-        include_nightly: true,
+        include_private: release_train == ReleaseTrain::Internal,
+        include_nightly: release_train == ReleaseTrain::Nightly || fallback_to_nightly,
     })
     .await?;
-    if let Some(v) = versions.iter().filter(|v| v.is_point_release()).last() {
-        return Ok(v.clone());
-    } else {
-        Ok(versions.last().cloned().context("No versions found")?)
+    let latest_for_train = versions
+        .iter()
+        .filter(|v| release_train == ReleaseTrain::from_version(&v.version))
+        .last()
+        .cloned();
+    if let Some(latest_for_train) = latest_for_train {
+        return Ok(latest_for_train);
+    } else if fallback_to_nightly {
+        let latest_nightly = versions.iter().filter(|v| v.is_nightly()).last().cloned();
+        if let Some(latest_nightly) = latest_nightly {
+            return Ok(latest_nightly);
+        }
     }
+    Err(anyhow::anyhow!("No versions found for {:?}", release_train))
 }
 
 async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
@@ -134,19 +170,30 @@ async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersi
     match &settings.default_runtime {
         Some(version) => Ok(RuntimeVersion::without_builds(version.clone())),
         None => {
-            log::info!("No default runtime version set, using latest remote version");
-            let version = get_latest_remote_version().await?;
-            log::info!("Found latest remote version: {}", version.version);
-            Ok(version)
+            anyhow::bail!("No default runtime version set")
         }
     }
+}
+
+async fn set_default_runtime(
+    settings: &mut Settings,
+    version: &RuntimeVersion,
+) -> anyhow::Result<()> {
+    version.install().await?;
+    settings.default_runtime = Some(version.version.clone());
+    settings.save()?;
+    println!(
+        "The default runtime version is now {}",
+        version.version.to_string()
+    );
+    Ok(())
 }
 
 async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::Runtime(RuntimeCommands::List) => {
+        Commands::Runtime(RuntimeCommands::ListAll) => {
             for build in get_versions(VersionsFilter {
                 include_private: true,
                 include_nightly: true,
@@ -167,13 +214,12 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
         }
         Commands::Runtime(RuntimeCommands::SetDefault { version }) => {
             let runtime_version = get_version(&version).await?;
-            runtime_version.install().await?;
-            settings.default_runtime = Some(runtime_version.version.clone());
-            settings.save()?;
-            println!(
-                "The default runtime version is now {}",
-                runtime_version.version.to_string()
-            );
+            set_default_runtime(&mut settings, &runtime_version).await?;
+        }
+        Commands::Runtime(RuntimeCommands::Update) => {
+            let version =
+                get_latest_remote_version_for_train(settings.release_train(), false).await?;
+            set_default_runtime(&mut settings, &version).await?;
         }
         Commands::Runtime(RuntimeCommands::Current) => {
             let version = get_current_runtime(&settings).await?;
@@ -190,8 +236,13 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn runtime_exec(settings: &Settings, args: Vec<String>) -> anyhow::Result<()> {
-    let version = get_current_runtime(settings).await?;
+async fn runtime_exec(mut settings: Settings, args: Vec<String>) -> anyhow::Result<()> {
+    if settings.default_runtime.is_none() {
+        println!("No default runtime version set, installing latest stable version");
+        let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true).await?;
+        set_default_runtime(&mut settings, &version).await?;
+    }
+    let version = get_current_runtime(&settings).await?;
     version.install().await?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
@@ -214,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
     if args.get(0) == Some(&"runtime".to_string()) {
         version_manager_main(settings).await?;
     } else if args.get(0) == Some(&"--help".to_string()) {
-        runtime_exec(&settings, args).await?;
+        runtime_exec(settings, args).await?;
         println!("");
         println!(
             "{}",
@@ -228,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
             "runtime".white().bold()
         );
     } else {
-        runtime_exec(&settings, args).await?;
+        runtime_exec(settings, args).await?;
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 use semver::VersionReq;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 pub struct AmbientToml {

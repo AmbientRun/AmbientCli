@@ -1,4 +1,4 @@
-use crate::{environment::runtimes_dir, Os};
+use crate::{environment::runtimes_dir, Os, ReleaseTrain};
 use anyhow::Context;
 use itertools::Itertools;
 use serde::Deserialize;
@@ -11,7 +11,8 @@ struct BucketList {
 #[derive(Debug, Deserialize)]
 struct BucketItem {
     name: String,
-    mediaLink: String,
+    #[serde(rename = "mediaLink")]
+    media_link: String,
 }
 
 #[derive(Debug, Clone)]
@@ -27,10 +28,10 @@ impl RuntimeVersion {
         }
     }
     pub fn is_nightly(&self) -> bool {
-        self.version.to_string().contains("nightly")
+        ReleaseTrain::from_version(&self.version) == ReleaseTrain::Nightly
     }
     pub fn is_point_release(&self) -> bool {
-        self.version.pre.is_empty()
+        ReleaseTrain::from_version(&self.version) == ReleaseTrain::Stable
     }
     pub fn is_public(&self) -> bool {
         self.is_point_release() || self.is_nightly()
@@ -124,7 +125,7 @@ async fn get_versions_with_prefix(
                 .map(|(_, build)| {
                     Ok(Build {
                         os: Os::from_str(build.name.split("/").nth(2).context("Invalid build")?)?,
-                        url: build.mediaLink,
+                        url: build.media_link,
                     })
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?,
