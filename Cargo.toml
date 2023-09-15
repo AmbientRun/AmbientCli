@@ -2,6 +2,8 @@
 name = "ambient"
 version = "0.2.0"
 edition = "2021"
+description = "CLI for Ambient, the multiplayer game engine"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
