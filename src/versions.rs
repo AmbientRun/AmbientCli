@@ -20,6 +20,12 @@ pub struct RuntimeVersion {
     pub builds: Vec<Build>,
 }
 impl RuntimeVersion {
+    pub fn without_builds(version: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            version: semver::Version::parse(version)?,
+            builds: Vec::new(),
+        })
+    }
     pub fn is_nightly(&self) -> bool {
         self.version.to_string().contains("nightly")
     }

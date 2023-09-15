@@ -105,13 +105,23 @@ async fn main() -> anyhow::Result<()> {
             let runtime_version = get_version(&version).await?;
             runtime_version.install().await?;
             settings.default_runtime = Some(runtime_version.version.to_string());
+            settings.save()?;
             println!(
                 "The default runtime version is now {}",
                 runtime_version.version.to_string()
             );
         }
         Commands::Variant(args) => {
-            println!("args: {:?}", args);
+            let version = match &settings.default_runtime {
+                Some(version) => RuntimeVersion::without_builds(version)?,
+                None => {
+                    anyhow::bail!("No default runtime version set");
+                }
+            };
+            let mut process = std::process::Command::new(version.exe_path()?)
+                .args(args)
+                .spawn()?;
+            process.wait()?;
         }
     }
 
