@@ -62,7 +62,6 @@ impl RuntimeVersion {
     }
     pub async fn install(&self) -> anyhow::Result<()> {
         if self.is_installed()? {
-            println!("Runtime version {} is already installed", self.version);
             return Ok(());
         }
         println!("Installing runtime version: {}", self.version);
