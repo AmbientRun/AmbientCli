@@ -41,10 +41,17 @@ pub enum RuntimeCommands {
     },
     /// Show the runtime version that will be used by default in this directory
     Current,
+    /// Show where the settings file is located
+    ShowSettingsPath,
+    /// Remove all installed runtime versions
+    UninstallAll,
 }
 
 async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathBuf)>> {
     let runtimes_dir = runtimes_dir()?;
+    if !runtimes_dir.exists() {
+        return Ok(Vec::new());
+    }
     let mut runtimes = Vec::new();
     for entry in std::fs::read_dir(runtimes_dir)? {
         let entry = entry?;
@@ -155,6 +162,13 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
         Commands::Runtime(RuntimeCommands::Current) => {
             let version = get_current_runtime(&settings).await?;
             println!("{}", version.version);
+        }
+        Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
+            println!("{}", settings_path()?.to_string_lossy());
+        }
+        Commands::Runtime(RuntimeCommands::UninstallAll) => {
+            std::fs::remove_dir_all(runtimes_dir()?)?;
+            std::fs::create_dir_all(runtimes_dir()?)?;
         }
     }
     Ok(())

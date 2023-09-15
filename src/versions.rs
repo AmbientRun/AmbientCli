@@ -62,6 +62,7 @@ impl RuntimeVersion {
         let data = self.download().await?;
         let mut arch = zip::ZipArchive::new(std::io::Cursor::new(data))?;
         let path = runtimes_dir()?.join(self.version.to_string());
+        std::fs::create_dir_all(&path)?;
         arch.extract(&path)?;
 
         println!("Installed at: {:?}", path);
