@@ -1,8 +1,8 @@
-use crate::Os;
+use crate::{environment::runtimes_dir, Os};
 use anyhow::Context;
 use itertools::Itertools;
 use serde::Deserialize;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Deserialize)]
 struct BucketList {
@@ -22,6 +22,44 @@ pub struct RuntimeVersion {
 impl RuntimeVersion {
     pub fn is_nightly(&self) -> bool {
         self.version.to_string().contains("nightly")
+    }
+    pub fn dir_path(&self) -> anyhow::Result<PathBuf> {
+        Ok(runtimes_dir()?.join(self.version.to_string()))
+    }
+    pub fn exe_path(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.dir_path()?.join(Os::current().ambient_bin_name()))
+    }
+    pub fn is_installed(&self) -> anyhow::Result<bool> {
+        Ok(self.exe_path()?.exists())
+    }
+    async fn download(&self) -> anyhow::Result<Vec<u8>> {
+        let os = Os::current();
+        Ok(reqwest::get(
+            &self
+                .builds
+                .iter()
+                .find(|b| b.os == os)
+                .context("No build for this OS")?
+                .url,
+        )
+        .await?
+        .bytes()
+        .await?
+        .to_vec())
+    }
+    pub async fn install(&self) -> anyhow::Result<()> {
+        if self.is_installed()? {
+            println!("Runtime version {} is already installed", self.version);
+            return Ok(());
+        }
+        println!("Installing runtime version: {}", self.version);
+        let data = self.download().await?;
+        let mut arch = zip::ZipArchive::new(std::io::Cursor::new(data))?;
+        let path = runtimes_dir()?.join(self.version.to_string());
+        arch.extract(&path)?;
+
+        println!("Installed at: {:?}", path);
+        Ok(())
     }
 }
 #[derive(Debug)]

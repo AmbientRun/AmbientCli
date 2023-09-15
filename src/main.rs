@@ -1,11 +1,13 @@
+mod environment;
 mod versions;
 
 use anyhow::Context;
 use clap::Parser;
 use directories::ProjectDirs;
+use environment::{runtimes_dir, settings_path, Os};
 use futures::StreamExt;
 use itertools::Itertools;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
 use versions::{get_version, get_versions, RuntimeVersion};
 
@@ -27,68 +29,40 @@ pub enum Commands {
 #[derive(Parser, Clone, Debug)]
 pub enum RuntimeCommands {
     List,
+    ListInstalled,
     Install { version: String },
     InstallLatestNightly,
+    SetDefault { version: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Os {
-    Macos,
-    Windows,
-    Linux,
-}
-impl std::fmt::Display for Os {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Os::Macos => write!(f, "macos-latest"),
-            Os::Windows => write!(f, "windows-latest"),
-            Os::Linux => write!(f, "ubuntu-22.04"),
+async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathBuf)>> {
+    let runtimes_dir = runtimes_dir()?;
+    let mut runtimes = Vec::new();
+    for entry in std::fs::read_dir(runtimes_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let version = semver::Version::parse(entry.file_name().to_str().unwrap())?;
+            runtimes.push((version, path.join(Os::current().ambient_bin_name())));
         }
     }
+    Ok(runtimes)
 }
-impl FromStr for Os {
-    type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "macos-latest" => Ok(Os::Macos),
-            "windows-latest" => Ok(Os::Windows),
-            "ubuntu-22.04" => Ok(Os::Linux),
-            _ => Err(anyhow::anyhow!("Invalid OS")),
-        }
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct Settings {
+    default_runtime: Option<String>,
+}
+impl Settings {
+    fn load() -> anyhow::Result<Self> {
+        Ok(serde_json::from_str(
+            std::fs::read_to_string(settings_path()?)?.as_str(),
+        )?)
     }
-}
-
-fn app_dir() -> anyhow::Result<ProjectDirs> {
-    Ok(ProjectDirs::from("com", "Ambient", "AmbientCli")
-        .context("Failed to created project dirs")?)
-}
-fn runtimes_dir() -> anyhow::Result<PathBuf> {
-    Ok(app_dir()?.data_dir().join("runtimes"))
-}
-async fn download_runtime(version: &RuntimeVersion, os: Os) -> anyhow::Result<Vec<u8>> {
-    Ok(reqwest::get(
-        &version
-            .builds
-            .iter()
-            .find(|b| b.os == os)
-            .context("No build for this OS")?
-            .url,
-    )
-    .await?
-    .bytes()
-    .await?
-    .to_vec())
-}
-async fn install_runtime(version: &RuntimeVersion, os: Os) -> anyhow::Result<()> {
-    println!("Installing runtime version: {}", version.version);
-    let data = download_runtime(&version, os).await?;
-    let mut arch = zip::ZipArchive::new(std::io::Cursor::new(data))?;
-    let path = runtimes_dir()?.join(version.version.to_string());
-    arch.extract(&path)?;
-
-    println!("Installed at: {:?}", path);
-    Ok(())
+    fn save(&self) -> anyhow::Result<()> {
+        std::fs::write(settings_path()?, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
 }
 
 #[tokio::main]
@@ -97,18 +71,21 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let os = if cfg!(target_os = "macos") {
-        Os::Macos
-    } else if cfg!(target_os = "windows") {
-        Os::Windows
+    let mut settings = if settings_path()?.exists() {
+        Settings::load()?
     } else {
-        Os::Linux
+        Settings::default()
     };
 
     match args.command {
         Commands::Runtime(RuntimeCommands::List) => {
             for build in get_versions().await? {
-                println!("{:?}", build);
+                println!("{}", build.version);
+            }
+        }
+        Commands::Runtime(RuntimeCommands::ListInstalled) => {
+            for (version, _) in list_installed_runtimes().await? {
+                println!("{}", version);
             }
         }
         Commands::Runtime(RuntimeCommands::InstallLatestNightly) => {
@@ -118,11 +95,20 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|v| v.is_nightly())
                 .last()
                 .context("No nightly versions found")?;
-            install_runtime(&latest_nightly, os).await?;
+            latest_nightly.install().await?;
         }
         Commands::Runtime(RuntimeCommands::Install { version }) => {
             let runtime_version = get_version(&version).await?;
-            install_runtime(&runtime_version, os).await?;
+            runtime_version.install().await?;
+        }
+        Commands::Runtime(RuntimeCommands::SetDefault { version }) => {
+            let runtime_version = get_version(&version).await?;
+            runtime_version.install().await?;
+            settings.default_runtime = Some(runtime_version.version.to_string());
+            println!(
+                "The default runtime version is now {}",
+                runtime_version.version.to_string()
+            );
         }
         Commands::Variant(args) => {
             println!("args: {:?}", args);
