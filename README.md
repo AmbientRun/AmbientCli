@@ -2,6 +2,12 @@
 
 This is the command line tool for [Ambient](https://github.com/AmbientRun/Ambient), the multiplayer game engine.
 
+Installing:
+
+```sh
+cargo install ambient
+```
+
 Getting started:
 
 ```sh
