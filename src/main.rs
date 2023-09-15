@@ -6,8 +6,8 @@ use directories::ProjectDirs;
 use futures::StreamExt;
 use itertools::Itertools;
 use serde::Deserialize;
-use std::str::FromStr;
-use versions::{get_version, get_versions};
+use std::{path::PathBuf, str::FromStr};
+use versions::{get_version, get_versions, RuntimeVersion};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -59,10 +59,16 @@ impl FromStr for Os {
     }
 }
 
-async fn download_runtime(version: &str, os: Os) -> anyhow::Result<Vec<u8>> {
-    let runtime_version = get_version(version).await?;
+fn app_dir() -> anyhow::Result<ProjectDirs> {
+    Ok(ProjectDirs::from("com", "Ambient", "AmbientCli")
+        .context("Failed to created project dirs")?)
+}
+fn runtimes_dir() -> anyhow::Result<PathBuf> {
+    Ok(app_dir()?.data_dir().join("runtimes"))
+}
+async fn download_runtime(version: &RuntimeVersion, os: Os) -> anyhow::Result<Vec<u8>> {
     Ok(reqwest::get(
-        &runtime_version
+        &version
             .builds
             .iter()
             .find(|b| b.os == os)
@@ -74,9 +80,14 @@ async fn download_runtime(version: &str, os: Os) -> anyhow::Result<Vec<u8>> {
     .await?
     .to_vec())
 }
-async fn install_runtime(version: &str, os: Os) -> anyhow::Result<()> {
+async fn install_runtime(version: &RuntimeVersion, os: Os) -> anyhow::Result<()> {
+    println!("Installing runtime version: {}", version.version);
     let data = download_runtime(&version, os).await?;
-    println!("data: {:?}", data.len());
+    let mut arch = zip::ZipArchive::new(std::io::Cursor::new(data))?;
+    let path = runtimes_dir()?.join(version.version.to_string());
+    arch.extract(&path)?;
+
+    println!("Installed at: {:?}", path);
     Ok(())
 }
 
@@ -85,8 +96,6 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let dirs = ProjectDirs::from("com", "Ambient", "AmbientCli")
-        .context("Failed to created project dirs")?;
 
     let os = if cfg!(target_os = "macos") {
         Os::Macos
@@ -109,10 +118,11 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|v| v.is_nightly())
                 .last()
                 .context("No nightly versions found")?;
-            install_runtime(&latest_nightly.version.to_string(), os).await?;
+            install_runtime(&latest_nightly, os).await?;
         }
         Commands::Runtime(RuntimeCommands::Install { version }) => {
-            install_runtime(&version, os).await?;
+            let runtime_version = get_version(&version).await?;
+            install_runtime(&runtime_version, os).await?;
         }
         Commands::Variant(args) => {
             println!("args: {:?}", args);
