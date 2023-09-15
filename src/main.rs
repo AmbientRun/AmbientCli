@@ -33,11 +33,9 @@ pub enum RuntimeCommands {
     /// Install a specific runtime version
     Install { version: String },
     /// Update the default runtime version to the latest available
-    Update,
+    UpdateDefault,
     /// Set the global default version
     SetDefault { version: String },
-    /// Show the runtime version that will be used by default in this directory
-    Current,
     /// Show where the settings file is located
     ShowSettingsPath,
     /// Remove all installed runtime versions
@@ -216,14 +214,10 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
             let runtime_version = get_version(&version).await?;
             set_default_runtime(&mut settings, &runtime_version).await?;
         }
-        Commands::Runtime(RuntimeCommands::Update) => {
+        Commands::Runtime(RuntimeCommands::UpdateDefault) => {
             let version =
                 get_latest_remote_version_for_train(settings.release_train(), false).await?;
             set_default_runtime(&mut settings, &version).await?;
-        }
-        Commands::Runtime(RuntimeCommands::Current) => {
-            let version = get_current_runtime(&settings).await?;
-            println!("{}", version.version);
         }
         Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
             println!("{}", settings_path()?.to_string_lossy());
