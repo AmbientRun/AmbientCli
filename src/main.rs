@@ -5,7 +5,7 @@ mod versions;
 use ambient_toml::AmbientToml;
 use clap::Parser;
 use colored::Colorize;
-use environment::{runtimes_dir, settings_path, Os};
+use environment::{app_dir, runtimes_dir, settings_path, Os};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -90,6 +90,7 @@ impl Settings {
         )?)
     }
     fn save(&self) -> anyhow::Result<()> {
+        std::fs::create_dir_all(app_dir()?.config_dir())?;
         std::fs::write(settings_path()?, serde_json::to_string_pretty(self)?)?;
         Ok(())
     }
@@ -249,7 +250,7 @@ async fn runtime_exec(mut settings: Settings, args: Vec<String>) -> anyhow::Resu
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let settings = if settings_path()?.exists() {
+    let settings = if settings_path()?.try_exists()? {
         Settings::load()?
     } else {
         Settings::default()
