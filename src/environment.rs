@@ -9,8 +9,11 @@ pub fn app_dir() -> anyhow::Result<ProjectDirs> {
 pub fn runtimes_dir() -> anyhow::Result<PathBuf> {
     Ok(app_dir()?.data_dir().join("runtimes"))
 }
+pub fn settings_dir() -> anyhow::Result<PathBuf> {
+    Ok(app_dir()?.config_dir().to_path_buf())
+}
 pub fn settings_path() -> anyhow::Result<PathBuf> {
-    Ok(app_dir()?.config_dir().join("settings.json"))
+    Ok(settings_dir()?.join("settings.json"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
