@@ -8,7 +8,7 @@ use colored::Colorize;
 use environment::{runtimes_dir, settings_dir, settings_path, Os};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
@@ -159,11 +159,13 @@ async fn get_latest_remote_version_for_train(
     Err(anyhow::anyhow!("No versions found for {:?}", release_train))
 }
 
-async fn get_current_runtime(settings: &Settings) -> anyhow::Result<RuntimeVersion> {
-    if AmbientToml::exists() {
-        let toml = AmbientToml::current()?;
-        if let Some(version_req) = toml.package.ambient_version {
-            return get_version_satisfying_req(settings, &version_req).await;
+async fn get_current_runtime(
+    settings: &Settings,
+    ambient_toml: &Option<AmbientToml>,
+) -> anyhow::Result<RuntimeVersion> {
+    if let Some(toml) = ambient_toml {
+        if let Some(version_req) = &toml.package.ambient_version {
+            return get_version_satisfying_req(settings, version_req).await;
         }
     }
     match &settings.default_runtime {
@@ -237,13 +239,42 @@ async fn runtime_exec(mut settings: Settings, args: Vec<String>) -> anyhow::Resu
         let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true).await?;
         set_default_runtime(&mut settings, &version).await?;
     }
-    let version = get_current_runtime(&settings).await?;
+    let ambient_toml = get_ambient_toml(&args)?;
+    let version = get_current_runtime(&settings, &ambient_toml).await?;
     version.install().await?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
         .spawn()?;
     process.wait()?;
     Ok(())
+}
+
+fn project_dir_from_args(args: &[String]) -> Option<PathBuf> {
+    let maybe_path = args.get(1)?;
+    if maybe_path.starts_with("--") {
+        return None;
+    }
+    let dir = Path::new(&maybe_path);
+    if dir.join("ambient.toml").exists() {
+        Some(dir.to_path_buf())
+    } else {
+        None
+    }
+}
+fn ambient_toml_path_from_args(args: &[String]) -> PathBuf {
+    match project_dir_from_args(args) {
+        Some(path) => path.join("ambient.toml"),
+        None => Path::new("ambient.toml").to_path_buf(),
+    }
+}
+
+fn get_ambient_toml(args: &[String]) -> anyhow::Result<Option<AmbientToml>> {
+    let path = ambient_toml_path_from_args(&args);
+    if path.exists() {
+        Ok(Some(AmbientToml::from_file(path)?))
+    } else {
+        Ok(None)
+    }
 }
 
 #[tokio::main]
