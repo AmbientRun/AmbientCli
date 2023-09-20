@@ -9,10 +9,7 @@ use colored::Colorize;
 use environment::{runtimes_dir, settings_dir, settings_path, Os};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
@@ -38,6 +35,8 @@ pub enum RuntimeCommands {
     Install { version: String },
     /// Update the default runtime version to the latest available
     UpdateDefault,
+    /// Update the runtime version for the local package
+    UpdateLocal,
     /// Set the global default version
     SetDefault { version: String },
     /// Set the local package ambient runtime version
@@ -82,6 +81,20 @@ impl ReleaseTrain {
                 ReleaseTrain::Internal
             }
         }
+    }
+    pub fn from_version_req(version_req: &semver::VersionReq) -> Self {
+        for comp in &version_req.comparators {
+            if comp.pre.is_empty() {
+                return ReleaseTrain::Stable;
+            } else {
+                if comp.pre.contains("nightly") {
+                    return ReleaseTrain::Nightly;
+                } else {
+                    return ReleaseTrain::Internal;
+                }
+            }
+        }
+        ReleaseTrain::Stable
     }
 }
 
@@ -199,6 +212,10 @@ async fn set_ambient_toml_runtime(args: &[String], version: &str) -> anyhow::Res
     let path = ambient_toml_path_from_args(&args);
     if path.exists() {
         set_ambient_toml_runtime_version(&path, version)?;
+        println!(
+            "Runtime version set to ambient_version=\"{}\" in ambient.toml",
+            version
+        );
         Ok(())
     } else {
         anyhow::bail!("No ambient.toml found at path {:?}", path);
@@ -239,6 +256,16 @@ async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> an
             let version =
                 get_latest_remote_version_for_train(settings.release_train(), false).await?;
             set_default_runtime(&mut settings, &version).await?;
+        }
+        Commands::Runtime(RuntimeCommands::UpdateLocal) => {
+            let ambient_toml = get_ambient_toml(raw_args)?.context("No ambient.toml found")?;
+            let release_train = ambient_toml
+                .package
+                .ambient_version
+                .map(|v| ReleaseTrain::from_version_req(&v))
+                .unwrap_or(ReleaseTrain::Stable);
+            let version = get_latest_remote_version_for_train(release_train, false).await?;
+            set_ambient_toml_runtime(raw_args, &version.version.to_string()).await?;
         }
         Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
             println!("{}", settings_path()?.to_string_lossy());
