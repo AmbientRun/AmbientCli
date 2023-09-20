@@ -2,13 +2,17 @@ mod ambient_toml;
 mod environment;
 mod versions;
 
-use ambient_toml::AmbientToml;
+use ambient_toml::{set_ambient_toml_runtime_version, AmbientToml};
+use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
 use environment::{runtimes_dir, settings_dir, settings_path, Os};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
@@ -36,6 +40,8 @@ pub enum RuntimeCommands {
     UpdateDefault,
     /// Set the global default version
     SetDefault { version: String },
+    /// Set the local package ambient runtime version
+    SetLocal { version: String },
     /// Show where the settings file is located
     ShowSettingsPath,
     /// Remove all installed runtime versions
@@ -189,8 +195,17 @@ async fn set_default_runtime(
     );
     Ok(())
 }
+async fn set_ambient_toml_runtime(args: &[String], version: &str) -> anyhow::Result<()> {
+    let path = ambient_toml_path_from_args(&args);
+    if path.exists() {
+        set_ambient_toml_runtime_version(&path, version)?;
+        Ok(())
+    } else {
+        anyhow::bail!("No ambient.toml found at path {:?}", path);
+    }
+}
 
-async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
+async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
@@ -216,6 +231,9 @@ async fn version_manager_main(mut settings: Settings) -> anyhow::Result<()> {
         Commands::Runtime(RuntimeCommands::SetDefault { version }) => {
             let runtime_version = get_version(&version).await?;
             set_default_runtime(&mut settings, &runtime_version).await?;
+        }
+        Commands::Runtime(RuntimeCommands::SetLocal { version }) => {
+            set_ambient_toml_runtime(raw_args, &version).await?;
         }
         Commands::Runtime(RuntimeCommands::UpdateDefault) => {
             let version =
@@ -289,7 +307,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.get(0) == Some(&"runtime".to_string()) {
-        version_manager_main(settings).await?;
+        version_manager_main(&args, settings).await?;
     } else if args.get(0) == Some(&"--help".to_string()) {
         runtime_exec(settings, args).await?;
         println!("");
