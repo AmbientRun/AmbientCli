@@ -2,14 +2,14 @@ mod ambient_toml;
 mod environment;
 mod versions;
 
-use ambient_toml::{set_ambient_toml_runtime_version, AmbientToml};
+use ambient_toml::AmbientToml;
 use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
-use environment::{runtimes_dir, settings_dir, settings_path, Os};
+use environment::{runtimes_dir, settings_dir, settings_path, Os, PackagePath};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use versions::{get_version, get_versions, RuntimeVersion, VersionsFilter};
 
 #[derive(Parser, Debug)]
@@ -208,21 +208,11 @@ async fn set_default_runtime(
     );
     Ok(())
 }
-async fn set_ambient_toml_runtime(args: &[String], version: &str) -> anyhow::Result<()> {
-    let path = ambient_toml_path_from_args(&args);
-    if path.exists() {
-        set_ambient_toml_runtime_version(&path, version)?;
-        println!(
-            "Runtime version set to ambient_version=\"{}\" in ambient.toml",
-            version
-        );
-        Ok(())
-    } else {
-        anyhow::bail!("No ambient.toml found at path {:?}", path);
-    }
-}
 
-async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> anyhow::Result<()> {
+async fn version_manager_main(
+    package_path: &PackagePath,
+    mut settings: Settings,
+) -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
@@ -250,7 +240,7 @@ async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> an
             set_default_runtime(&mut settings, &runtime_version).await?;
         }
         Commands::Runtime(RuntimeCommands::SetLocal { version }) => {
-            set_ambient_toml_runtime(raw_args, &version).await?;
+            package_path.ambient_toml().set_runtime(&version)?;
         }
         Commands::Runtime(RuntimeCommands::UpdateDefault) => {
             let version =
@@ -258,14 +248,19 @@ async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> an
             set_default_runtime(&mut settings, &version).await?;
         }
         Commands::Runtime(RuntimeCommands::UpdateLocal) => {
-            let ambient_toml = get_ambient_toml(raw_args)?.context("No ambient.toml found")?;
+            let ambient_toml = package_path
+                .ambient_toml()
+                .get_content()?
+                .context("No ambient.toml found")?;
             let release_train = ambient_toml
                 .package
                 .ambient_version
                 .map(|v| ReleaseTrain::from_version_req(&v))
                 .unwrap_or(ReleaseTrain::Stable);
             let version = get_latest_remote_version_for_train(release_train, false).await?;
-            set_ambient_toml_runtime(raw_args, &version.version.to_string()).await?;
+            package_path
+                .ambient_toml()
+                .set_runtime(&version.version.to_string())?;
         }
         Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
             println!("{}", settings_path()?.to_string_lossy());
@@ -278,13 +273,17 @@ async fn version_manager_main(raw_args: &[String], mut settings: Settings) -> an
     Ok(())
 }
 
-async fn runtime_exec(mut settings: Settings, args: Vec<String>) -> anyhow::Result<()> {
+async fn runtime_exec(
+    mut settings: Settings,
+    package_path: &PackagePath,
+    args: Vec<String>,
+) -> anyhow::Result<()> {
     if settings.default_runtime.is_none() {
         println!("No default runtime version set, installing latest stable version");
         let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true).await?;
         set_default_runtime(&mut settings, &version).await?;
     }
-    let ambient_toml = get_ambient_toml(&args)?;
+    let ambient_toml = package_path.ambient_toml().get_content()?;
     let version = get_current_runtime(&settings, &ambient_toml).await?;
     version.install().await?;
     let mut process = std::process::Command::new(version.exe_path()?)
@@ -292,34 +291,6 @@ async fn runtime_exec(mut settings: Settings, args: Vec<String>) -> anyhow::Resu
         .spawn()?;
     process.wait()?;
     Ok(())
-}
-
-fn project_dir_from_args(args: &[String]) -> Option<PathBuf> {
-    let maybe_path = args.get(1)?;
-    if maybe_path.starts_with("--") {
-        return None;
-    }
-    let dir = Path::new(&maybe_path);
-    if dir.join("ambient.toml").exists() {
-        Some(dir.to_path_buf())
-    } else {
-        None
-    }
-}
-fn ambient_toml_path_from_args(args: &[String]) -> PathBuf {
-    match project_dir_from_args(args) {
-        Some(path) => path.join("ambient.toml"),
-        None => Path::new("ambient.toml").to_path_buf(),
-    }
-}
-
-fn get_ambient_toml(args: &[String]) -> anyhow::Result<Option<AmbientToml>> {
-    let path = ambient_toml_path_from_args(&args);
-    if path.exists() {
-        Ok(Some(AmbientToml::from_file(path)?))
-    } else {
-        Ok(None)
-    }
 }
 
 #[tokio::main]
@@ -333,10 +304,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let package_path = PackagePath::from_args_or_local(&args);
     if args.get(0) == Some(&"runtime".to_string()) {
-        version_manager_main(&args, settings).await?;
+        version_manager_main(&package_path, settings).await?;
     } else if args.get(0) == Some(&"--help".to_string()) {
-        runtime_exec(settings, args).await?;
+        runtime_exec(settings, &package_path, args).await?;
         println!("");
         println!(
             "{}",
@@ -350,7 +322,7 @@ async fn main() -> anyhow::Result<()> {
             "runtime".white().bold()
         );
     } else {
-        runtime_exec(settings, args).await?;
+        runtime_exec(settings, &package_path, args).await?;
     }
 
     Ok(())
