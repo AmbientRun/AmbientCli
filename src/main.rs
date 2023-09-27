@@ -2,7 +2,6 @@ mod ambient_toml;
 mod environment;
 mod versions;
 
-use ambient_toml::AmbientToml;
 use anyhow::Context;
 use clap::Parser;
 use colored::Colorize;
@@ -121,6 +120,16 @@ impl Settings {
     }
 }
 
+/// If the version requirement contains a pre-release identifier, only versions with the same pre-release identifier will be considered.
+fn matches_exact(version_req: &VersionReq, version: &semver::Version) -> bool {
+    for comp in &version_req.comparators {
+        if !comp.pre.is_empty() || !version.pre.is_empty() {
+            return comp.matches(version) && comp.pre == version.pre;
+        }
+    }
+    version_req.matches(version)
+}
+
 async fn get_version_satisfying_req(
     settings: &Settings,
     version_req: &VersionReq,
@@ -128,14 +137,14 @@ async fn get_version_satisfying_req(
     log::info!("Looking for version satisfying {}", version_req);
     if let Some(default_version) = &settings.default_runtime {
         log::info!("Checking default version: {}", default_version);
-        if version_req.matches(default_version) {
+        if matches_exact(version_req, default_version) {
             log::info!("Default version matches, returning.");
             return Ok(RuntimeVersion::without_builds(default_version.clone()));
         }
     }
     log::info!("Checking installed versions");
     for (version, _) in list_installed_runtimes().await? {
-        if version_req.matches(&version) {
+        if matches_exact(version_req, &version) {
             return Ok(RuntimeVersion::without_builds(version));
         }
     }
@@ -146,7 +155,7 @@ async fn get_version_satisfying_req(
     })
     .await?
     {
-        if version_req.matches(&version.version) {
+        if matches_exact(version_req, &version.version) {
             return Ok(version);
         }
     }
@@ -180,10 +189,14 @@ async fn get_latest_remote_version_for_train(
 
 async fn get_current_runtime(
     settings: &Settings,
-    ambient_toml: &Option<AmbientToml>,
+    package_path: &Option<PackagePath>,
 ) -> anyhow::Result<RuntimeVersion> {
-    if let Some(toml) = ambient_toml {
-        if let Some(version_req) = &toml.package.ambient_version {
+    if let Some(package_path) = package_path {
+        let ambient_toml = package_path
+            .ambient_toml()
+            .get_content()?
+            .context("No ambient.toml found")?;
+        if let Some(version_req) = &ambient_toml.package.ambient_version {
             return get_version_satisfying_req(settings, version_req).await;
         }
     }
@@ -210,7 +223,7 @@ async fn set_default_runtime(
 }
 
 async fn version_manager_main(
-    package_path: &PackagePath,
+    package_path: &Option<PackagePath>,
     mut settings: Settings,
 ) -> anyhow::Result<()> {
     let args = Args::parse();
@@ -240,7 +253,10 @@ async fn version_manager_main(
             set_default_runtime(&mut settings, &runtime_version).await?;
         }
         Commands::Runtime(RuntimeCommands::SetLocal { version }) => {
-            package_path.set_runtime(&semver::Version::parse(&version)?)?;
+            package_path
+                .as_ref()
+                .context("No local package found")?
+                .set_runtime(&semver::Version::parse(&version)?)?;
         }
         Commands::Runtime(RuntimeCommands::UpdateDefault) => {
             let version =
@@ -248,6 +264,7 @@ async fn version_manager_main(
             set_default_runtime(&mut settings, &version).await?;
         }
         Commands::Runtime(RuntimeCommands::UpdateLocal) => {
+            let package_path = package_path.as_ref().context("No local package found")?;
             let ambient_toml = package_path
                 .ambient_toml()
                 .get_content()?
@@ -273,7 +290,7 @@ async fn version_manager_main(
 
 async fn runtime_exec(
     mut settings: Settings,
-    package_path: &PackagePath,
+    package_path: &Option<PackagePath>,
     args: Vec<String>,
 ) -> anyhow::Result<()> {
     if settings.default_runtime.is_none() {
@@ -281,8 +298,7 @@ async fn runtime_exec(
         let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true).await?;
         set_default_runtime(&mut settings, &version).await?;
     }
-    let ambient_toml = package_path.ambient_toml().get_content()?;
-    let version = get_current_runtime(&settings, &ambient_toml).await?;
+    let version = get_current_runtime(&settings, &package_path).await?;
     version.install().await?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
@@ -302,7 +318,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let package_path = PackagePath::from_args_or_local(&args);
+    let package_path = PackagePath::get(&args);
     if args.get(0) == Some(&"runtime".to_string()) {
         version_manager_main(&package_path, settings).await?;
     } else if args.get(0) == Some(&"--help".to_string()) {
@@ -320,6 +336,13 @@ async fn main() -> anyhow::Result<()> {
             "runtime".white().bold()
         );
     } else {
+        if args.get(0) == Some(&"--version".to_string()) {
+            if let Some(package) = &package_path {
+                println!("Using package at {:?}", package.0);
+            } else {
+                println!("Using global runtime version");
+            }
+        }
         runtime_exec(settings, &package_path, args).await?;
     }
 

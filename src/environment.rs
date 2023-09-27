@@ -23,10 +23,18 @@ pub fn settings_path() -> anyhow::Result<PathBuf> {
 
 pub struct PackagePath(pub PathBuf);
 impl PackagePath {
-    pub fn from_args_or_local(args: &[String]) -> Self {
-        Self::from_args(args).unwrap_or_else(|| Self(std::env::current_dir().unwrap()))
+    pub fn get(args: &[String]) -> Option<Self> {
+        if let Some(pp) = Self::from_args(args) {
+            return Some(pp);
+        } else {
+            let local = std::env::current_dir().unwrap();
+            if local.join("ambient.toml").exists() {
+                return Some(Self(local));
+            }
+        }
+        None
     }
-    pub fn from_args(args: &[String]) -> Option<Self> {
+    fn from_args(args: &[String]) -> Option<Self> {
         let maybe_path = args.get(1)?;
         if maybe_path.starts_with("--") {
             return None;
