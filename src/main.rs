@@ -240,7 +240,7 @@ async fn version_manager_main(
             set_default_runtime(&mut settings, &runtime_version).await?;
         }
         Commands::Runtime(RuntimeCommands::SetLocal { version }) => {
-            package_path.ambient_toml().set_runtime(&version)?;
+            package_path.set_runtime(&semver::Version::parse(&version)?)?;
         }
         Commands::Runtime(RuntimeCommands::UpdateDefault) => {
             let version =
@@ -258,9 +258,7 @@ async fn version_manager_main(
                 .map(|v| ReleaseTrain::from_version_req(&v))
                 .unwrap_or(ReleaseTrain::Stable);
             let version = get_latest_remote_version_for_train(release_train, false).await?;
-            package_path
-                .ambient_toml()
-                .set_runtime(&version.version.to_string())?;
+            package_path.set_runtime(&version.version)?;
         }
         Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
             println!("{}", settings_path()?.to_string_lossy());
