@@ -11,7 +11,10 @@ homepage = "https://ambient.run"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.11.20", features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.20", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
 anyhow = "1.0.75"
 futures = "0.3.28"
