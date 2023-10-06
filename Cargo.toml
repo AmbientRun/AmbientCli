@@ -1,6 +1,6 @@
 [package]
 name = "ambient"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "CLI for Ambient, the multiplayer game engine"
 license = "MIT OR Apache-2.0"
@@ -14,8 +14,8 @@ homepage = "https://ambient.run"
 reqwest = { version = "0.11.20", default-features = false, features = [
     "rustls-tls",
     "json",
+    "blocking",
 ] }
-tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
 anyhow = "1.0.75"
 futures = "0.3.28"
 serde = { version = "1.0", features = ["derive"] }
@@ -25,8 +25,11 @@ clap = { version = "4.4.3", features = ["derive"] }
 itertools = "0.11.0"
 directories = "5.0"
 log = "0.4.20"
-env_logger = "0.10.0"
-zip = "0.6.6"
+env_logger = { version = "0.10.0", default-features = false, features = [
+    "auto-color",
+    "humantime",
+] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 toml = "0.8.0"
 colored = "2.0.4"
 toml_edit = "0.20.0"

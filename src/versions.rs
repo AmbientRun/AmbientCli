@@ -46,27 +46,25 @@ impl RuntimeVersion {
     pub fn is_installed(&self) -> anyhow::Result<bool> {
         Ok(self.exe_path()?.exists())
     }
-    async fn download(&self) -> anyhow::Result<Vec<u8>> {
+    fn download(&self) -> anyhow::Result<Vec<u8>> {
         let os = Os::current();
-        Ok(reqwest::get(
+        Ok(reqwest::blocking::get(
             &self
                 .builds
                 .iter()
                 .find(|b| b.os == os)
                 .context("No build for this OS")?
                 .url,
-        )
-        .await?
-        .bytes()
-        .await?
+        )?
+        .bytes()?
         .to_vec())
     }
-    pub async fn install(&self) -> anyhow::Result<()> {
+    pub fn install(&self) -> anyhow::Result<()> {
         if self.is_installed()? {
             return Ok(());
         }
         println!("Installing runtime version: {}", self.version);
-        let data = self.download().await?;
+        let data = self.download()?;
         let mut arch = zip::ZipArchive::new(std::io::Cursor::new(data))?;
         let path = runtimes_dir()?.join(self.version.to_string());
         std::fs::create_dir_all(&path)?;
@@ -93,14 +91,14 @@ pub struct VersionsFilter {
     pub include_nightly: bool,
 }
 
-pub async fn get_versions(filter: VersionsFilter) -> anyhow::Result<Vec<RuntimeVersion>> {
-    get_versions_with_prefix("", filter).await
+pub fn get_versions(filter: VersionsFilter) -> anyhow::Result<Vec<RuntimeVersion>> {
+    get_versions_with_prefix("", filter)
 }
-async fn get_versions_with_prefix(
+fn get_versions_with_prefix(
     prefix: &str,
     filter: VersionsFilter,
 ) -> anyhow::Result<Vec<RuntimeVersion>> {
-    let client = reqwest::Client::new();
+    let client = reqwest::blocking::Client::new();
 
     let builds = client
         .get("https://storage.googleapis.com/storage/v1/b/ambient-artifacts/o")
@@ -108,10 +106,8 @@ async fn get_versions_with_prefix(
             ("prefix", &format!("ambient-builds/{prefix}") as &str),
             ("alt", "json"),
         ])
-        .send()
-        .await?
-        .json::<BucketList>()
-        .await?;
+        .send()?
+        .json::<BucketList>()?;
     let builds = builds
         .items
         .into_iter()
@@ -140,15 +136,14 @@ async fn get_versions_with_prefix(
     versions.sort_by_key(|v| v.version.to_string());
     Ok(versions)
 }
-pub async fn get_version(version: &str) -> anyhow::Result<RuntimeVersion> {
+pub fn get_version(version: &str) -> anyhow::Result<RuntimeVersion> {
     Ok(get_versions_with_prefix(
         version,
         VersionsFilter {
             include_private: true,
             include_nightly: true,
         },
-    )
-    .await?
+    )?
     .into_iter()
     .next()
     .context("Version not found")?)
