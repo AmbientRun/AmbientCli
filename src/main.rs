@@ -46,7 +46,7 @@ pub enum RuntimeCommands {
     UninstallAll,
 }
 
-async fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathBuf)>> {
+fn list_installed_runtimes() -> anyhow::Result<Vec<(semver::Version, PathBuf)>> {
     let runtimes_dir = runtimes_dir()?;
     if !runtimes_dir.exists() {
         return Ok(Vec::new());
@@ -73,24 +73,20 @@ impl ReleaseTrain {
     pub fn from_version(version: &semver::Version) -> Self {
         if version.pre.is_empty() {
             ReleaseTrain::Stable
+        } else if version.pre.contains("nightly") {
+            ReleaseTrain::Nightly
         } else {
-            if version.pre.contains("nightly") {
-                ReleaseTrain::Nightly
-            } else {
-                ReleaseTrain::Internal
-            }
+            ReleaseTrain::Internal
         }
     }
     pub fn from_version_req(version_req: &semver::VersionReq) -> Self {
         for comp in &version_req.comparators {
             if comp.pre.is_empty() {
                 return ReleaseTrain::Stable;
+            } else if comp.pre.contains("nightly") {
+                return ReleaseTrain::Nightly;
             } else {
-                if comp.pre.contains("nightly") {
-                    return ReleaseTrain::Nightly;
-                } else {
-                    return ReleaseTrain::Internal;
-                }
+                return ReleaseTrain::Internal;
             }
         }
         ReleaseTrain::Stable
@@ -130,7 +126,7 @@ fn matches_exact(version_req: &VersionReq, version: &semver::Version) -> bool {
     version_req.matches(version)
 }
 
-async fn get_version_satisfying_req(
+fn get_version_satisfying_req(
     settings: &Settings,
     version_req: &VersionReq,
 ) -> anyhow::Result<RuntimeVersion> {
@@ -143,7 +139,7 @@ async fn get_version_satisfying_req(
         }
     }
     log::info!("Checking installed versions");
-    for (version, _) in list_installed_runtimes().await? {
+    for (version, _) in list_installed_runtimes()? {
         if matches_exact(version_req, &version) {
             return Ok(RuntimeVersion::without_builds(version));
         }
@@ -152,9 +148,7 @@ async fn get_version_satisfying_req(
     for version in get_versions(VersionsFilter {
         include_private: true,
         include_nightly: true,
-    })
-    .await?
-    {
+    })? {
         if matches_exact(version_req, &version.version) {
             return Ok(version);
         }
@@ -162,15 +156,14 @@ async fn get_version_satisfying_req(
     anyhow::bail!("No version found satisfying {}", version_req);
 }
 
-async fn get_latest_remote_version_for_train(
+fn get_latest_remote_version_for_train(
     release_train: ReleaseTrain,
     fallback_to_nightly: bool,
 ) -> anyhow::Result<RuntimeVersion> {
     let versions = get_versions(VersionsFilter {
         include_private: release_train == ReleaseTrain::Internal,
         include_nightly: release_train == ReleaseTrain::Nightly || fallback_to_nightly,
-    })
-    .await?;
+    })?;
     let latest_for_train = versions
         .iter()
         .filter(|v| release_train == ReleaseTrain::from_version(&v.version))
@@ -187,7 +180,7 @@ async fn get_latest_remote_version_for_train(
     Err(anyhow::anyhow!("No versions found for {:?}", release_train))
 }
 
-async fn get_current_runtime(
+fn get_current_runtime(
     settings: &Settings,
     package_path: &Option<PackagePath>,
 ) -> anyhow::Result<RuntimeVersion> {
@@ -197,7 +190,7 @@ async fn get_current_runtime(
             .get_content()?
             .context("No ambient.toml found")?;
         if let Some(version_req) = &ambient_toml.package.ambient_version {
-            return get_version_satisfying_req(settings, version_req).await;
+            return get_version_satisfying_req(settings, version_req);
         }
     }
     match &settings.default_runtime {
@@ -208,11 +201,8 @@ async fn get_current_runtime(
     }
 }
 
-async fn set_default_runtime(
-    settings: &mut Settings,
-    version: &RuntimeVersion,
-) -> anyhow::Result<()> {
-    version.install().await?;
+fn set_default_runtime(settings: &mut Settings, version: &RuntimeVersion) -> anyhow::Result<()> {
+    version.install()?;
     settings.default_runtime = Some(version.version.clone());
     settings.save()?;
     println!(
@@ -222,7 +212,7 @@ async fn set_default_runtime(
     Ok(())
 }
 
-async fn version_manager_main(
+fn version_manager_main(
     package_path: &Option<PackagePath>,
     mut settings: Settings,
 ) -> anyhow::Result<()> {
@@ -233,24 +223,22 @@ async fn version_manager_main(
             for build in get_versions(VersionsFilter {
                 include_private: true,
                 include_nightly: true,
-            })
-            .await?
-            {
+            })? {
                 println!("{}", build.version);
             }
         }
         Commands::Runtime(RuntimeCommands::ListInstalled) => {
-            for (version, _) in list_installed_runtimes().await? {
+            for (version, _) in list_installed_runtimes()? {
                 println!("{}", version);
             }
         }
         Commands::Runtime(RuntimeCommands::Install { version }) => {
-            let runtime_version = get_version(&version).await?;
-            runtime_version.install().await?;
+            let runtime_version = get_version(&version)?;
+            runtime_version.install()?;
         }
         Commands::Runtime(RuntimeCommands::SetDefault { version }) => {
-            let runtime_version = get_version(&version).await?;
-            set_default_runtime(&mut settings, &runtime_version).await?;
+            let runtime_version = get_version(&version)?;
+            set_default_runtime(&mut settings, &runtime_version)?;
         }
         Commands::Runtime(RuntimeCommands::SetLocal { version }) => {
             package_path
@@ -259,9 +247,8 @@ async fn version_manager_main(
                 .set_runtime(&semver::Version::parse(&version)?)?;
         }
         Commands::Runtime(RuntimeCommands::UpdateDefault) => {
-            let version =
-                get_latest_remote_version_for_train(settings.release_train(), false).await?;
-            set_default_runtime(&mut settings, &version).await?;
+            let version = get_latest_remote_version_for_train(settings.release_train(), false)?;
+            set_default_runtime(&mut settings, &version)?;
         }
         Commands::Runtime(RuntimeCommands::UpdateLocal) => {
             let package_path = package_path.as_ref().context("No local package found")?;
@@ -274,7 +261,7 @@ async fn version_manager_main(
                 .ambient_version
                 .map(|v| ReleaseTrain::from_version_req(&v))
                 .unwrap_or(ReleaseTrain::Stable);
-            let version = get_latest_remote_version_for_train(release_train, false).await?;
+            let version = get_latest_remote_version_for_train(release_train, false)?;
             package_path.set_runtime(&version.version)?;
         }
         Commands::Runtime(RuntimeCommands::ShowSettingsPath) => {
@@ -288,18 +275,18 @@ async fn version_manager_main(
     Ok(())
 }
 
-async fn runtime_exec(
+fn runtime_exec(
     mut settings: Settings,
     package_path: &Option<PackagePath>,
     args: Vec<String>,
 ) -> anyhow::Result<()> {
     if settings.default_runtime.is_none() {
         println!("No default runtime version set, installing latest stable version");
-        let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true).await?;
-        set_default_runtime(&mut settings, &version).await?;
+        let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true)?;
+        set_default_runtime(&mut settings, &version)?;
     }
-    let version = get_current_runtime(&settings, &package_path).await?;
-    version.install().await?;
+    let version = get_current_runtime(&settings, &package_path)?;
+    version.install()?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
         .spawn()?;
@@ -307,8 +294,7 @@ async fn runtime_exec(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let settings = if settings_path()?.exists() {
@@ -320,9 +306,9 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let package_path = PackagePath::get(&args);
     if args.get(0) == Some(&"runtime".to_string()) {
-        version_manager_main(&package_path, settings).await?;
+        version_manager_main(&package_path, settings)?;
     } else if args.get(0) == Some(&"--help".to_string()) {
-        runtime_exec(settings, &package_path, args).await?;
+        runtime_exec(settings, &package_path, args)?;
         println!("");
         println!(
             "{}",
@@ -343,7 +329,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("Using global runtime version");
             }
         }
-        runtime_exec(settings, &package_path, args).await?;
+        runtime_exec(settings, &package_path, args)?;
     }
 
     Ok(())
