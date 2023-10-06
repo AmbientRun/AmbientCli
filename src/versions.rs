@@ -6,6 +6,7 @@ use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Deserialize)]
 struct BucketList {
+    #[serde(default)]
     items: Vec<BucketItem>,
 }
 #[derive(Debug, Deserialize)]
