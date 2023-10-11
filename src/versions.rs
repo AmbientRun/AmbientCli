@@ -81,7 +81,7 @@ pub struct Build {
 }
 
 fn version_from_path(path: &str) -> anyhow::Result<semver::Version> {
-    let version = path.split("/").nth(1).context("Invalid path")?;
+    let version = path.split('/').nth(1).context("Invalid path")?;
     Ok(semver::Version::parse(version)?)
 }
 
@@ -120,7 +120,7 @@ fn get_versions_with_prefix(
             builds: builds
                 .map(|(_, build)| {
                     Ok(Build {
-                        os: Os::from_str(build.name.split("/").nth(2).context("Invalid build")?)?,
+                        os: Os::from_str(build.name.split('/').nth(2).context("Invalid build")?)?,
                         url: build.media_link,
                     })
                 })
@@ -137,7 +137,7 @@ fn get_versions_with_prefix(
     Ok(versions)
 }
 pub fn get_version(version: &str) -> anyhow::Result<RuntimeVersion> {
-    Ok(get_versions_with_prefix(
+    get_versions_with_prefix(
         version,
         VersionsFilter {
             include_private: true,
@@ -146,5 +146,5 @@ pub fn get_version(version: &str) -> anyhow::Result<RuntimeVersion> {
     )?
     .into_iter()
     .next()
-    .context("Version not found")?)
+    .context("Version not found")
 }
