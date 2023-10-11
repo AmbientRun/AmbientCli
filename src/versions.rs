@@ -48,16 +48,20 @@ impl RuntimeVersion {
     }
     fn download(&self) -> anyhow::Result<Vec<u8>> {
         let os = Os::current();
-        Ok(reqwest::blocking::get(
+
+        let reponse = ureq::get(
             &self
                 .builds
                 .iter()
                 .find(|b| b.os == os)
                 .context("No build for this OS")?
                 .url,
-        )?
-        .bytes()?
-        .to_vec())
+        )
+        .call()?;
+
+        let mut bytes: Vec<u8> = Vec::new();
+        reponse.into_reader().read_to_end(&mut bytes)?;
+        Ok(bytes)
     }
     pub fn install(&self) -> anyhow::Result<()> {
         if self.is_installed()? {
@@ -98,16 +102,12 @@ fn get_versions_with_prefix(
     prefix: &str,
     filter: VersionsFilter,
 ) -> anyhow::Result<Vec<RuntimeVersion>> {
-    let client = reqwest::blocking::Client::new();
+    let builds = ureq::get("https://storage.googleapis.com/storage/v1/b/ambient-artifacts/o")
+        .query("prefix", &format!("ambient-builds/{prefix}"))
+        .query("alt", "json")
+        .call()?
+        .into_json::<BucketList>()?;
 
-    let builds = client
-        .get("https://storage.googleapis.com/storage/v1/b/ambient-artifacts/o")
-        .query(&[
-            ("prefix", &format!("ambient-builds/{prefix}") as &str),
-            ("alt", "json"),
-        ])
-        .send()?
-        .json::<BucketList>()?;
     let builds = builds
         .items
         .into_iter()
