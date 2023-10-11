@@ -115,4 +115,4 @@ jobs:
         run: |
           ./ambient runtime install 0.3.0
           ./ambient runtime set-default 0.3.0
-          ./ambient --version | grep '^ambient 0.3.0$'
+          ./ambient --version | grep '^ambient 0.3.0justtesting$'
