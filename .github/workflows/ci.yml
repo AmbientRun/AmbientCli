@@ -31,6 +31,8 @@ jobs:
   test-linux:
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
         uses: Leafwing-Studios/cargo-cache@v1.1.0
       - uses: taiki-e/install-action@cargo-nextest
