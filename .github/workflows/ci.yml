@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: ["main", "kuba/set-up-ci"]
+    branches: ["main"]
     paths-ignore:
       - "README.md"
   pull_request:
@@ -87,10 +87,10 @@ jobs:
         with:
           name: ambient-${{ matrix.os }}
       - run: chmod a+x ambient
-      - name: Check that `ambient runtime list-all` works and includes 0.3.0
+      - name: Check that `ambient runtime list-all` works and includes "0.3.0"
         run: |
           ./ambient runtime list-all > versions-list
-          cat versions-list | grep '^0.3.0justtesting$'
+          cat versions-list | grep '^0.3.0$'
       - name: Check that `ambient runtime install 0.3.0` works
         run: |
           ./ambient runtime install 0.3.0
