@@ -48,7 +48,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-latest-xlarge
           - os: windows-latest
           - os: ubuntu-22.04
 
@@ -73,7 +73,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-latest-xlarge
           - os: windows-latest
           - os: ubuntu-22.04
 
