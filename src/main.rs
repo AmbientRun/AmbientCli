@@ -80,16 +80,17 @@ impl ReleaseTrain {
         }
     }
     pub fn from_version_req(version_req: &semver::VersionReq) -> Self {
-        for comp in &version_req.comparators {
+        if let Some(comp) = version_req.comparators.first() {
             if comp.pre.is_empty() {
-                return ReleaseTrain::Stable;
+                ReleaseTrain::Stable
             } else if comp.pre.contains("nightly") {
-                return ReleaseTrain::Nightly;
+                ReleaseTrain::Nightly
             } else {
-                return ReleaseTrain::Internal;
+                ReleaseTrain::Internal
             }
+        } else {
+            ReleaseTrain::Stable
         }
-        ReleaseTrain::Stable
     }
 }
 
@@ -111,7 +112,7 @@ impl Settings {
     fn release_train(&self) -> ReleaseTrain {
         self.default_runtime
             .as_ref()
-            .map(|v| ReleaseTrain::from_version(v))
+            .map(ReleaseTrain::from_version)
             .unwrap_or(ReleaseTrain::Stable)
     }
 }
@@ -207,7 +208,7 @@ fn set_default_runtime(settings: &mut Settings, version: &RuntimeVersion) -> any
     settings.save()?;
     println!(
         "The default runtime version is now {}",
-        version.version.to_string()
+        version.version
     );
     Ok(())
 }
@@ -285,7 +286,7 @@ fn runtime_exec(
         let version = get_latest_remote_version_for_train(ReleaseTrain::Stable, true)?;
         set_default_runtime(&mut settings, &version)?;
     }
-    let version = get_current_runtime(&settings, &package_path)?;
+    let version = get_current_runtime(&settings, package_path)?;
     version.install()?;
     let mut process = std::process::Command::new(version.exe_path()?)
         .args(args)
@@ -309,7 +310,7 @@ fn main() -> anyhow::Result<()> {
         version_manager_main(&package_path, settings)?;
     } else if args.get(0) == Some(&"--help".to_string()) {
         runtime_exec(settings, &package_path, args)?;
-        println!("");
+        println!();
         println!(
             "{}",
             "Runtime version manager commands:"

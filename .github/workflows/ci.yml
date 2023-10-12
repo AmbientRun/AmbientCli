@@ -1,0 +1,98 @@
+name: CI
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+  pull_request:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  clippy:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Leafwing-Studios/cargo-cache@v1.1.0
+      - name: Run clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --workspace --examples --tests
+
+  test-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Leafwing-Studios/cargo-cache@v1.1.0
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        env:
+          RUSTFLAGS: "-C debuginfo=0"
+        with:
+          command: nextest
+          args: run --workspace
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest-xlarge
+          - os: windows-latest
+          - os: ubuntu-22.04
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Leafwing-Studios/cargo-cache@v1.1.0
+      - name: Build
+        run: cargo build --workspace --release
+      - name: Upload ambient executable artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ambient-${{ matrix.os }}
+          path: |
+            target/release/ambient
+            target/release/ambient.exe
+
+  test-it-works:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest-xlarge
+          - os: windows-latest
+          - os: ubuntu-22.04
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Rust cache
+        uses: Leafwing-Studios/cargo-cache@v1.1.0
+      - name: Download ambient executable
+        uses: actions/download-artifact@v3
+        with:
+          name: ambient-${{ matrix.os }}
+      - run: chmod a+x ambient
+      - name: Check that `ambient runtime list-all` works and includes "0.3.0"
+        run: |
+          ./ambient runtime list-all > versions-list
+          cat versions-list | grep '^0.3.0$'
+      - name: Check that `ambient runtime install 0.3.0` works
+        run: |
+          ./ambient runtime install 0.3.0
+          ./ambient runtime set-default 0.3.0
+          ./ambient --version | grep '^ambient 0.3.0$'

@@ -8,8 +8,8 @@ use std::{
 use toml_edit::{value, Document, InlineTable};
 
 pub fn app_dir() -> anyhow::Result<ProjectDirs> {
-    Ok(ProjectDirs::from("com", "Ambient", "AmbientCli")
-        .context("Failed to created project dirs")?)
+    ProjectDirs::from("com", "Ambient", "AmbientCli")
+        .context("Failed to created project dirs")
 }
 pub fn runtimes_dir() -> anyhow::Result<PathBuf> {
     Ok(app_dir()?.data_dir().join("runtimes"))
